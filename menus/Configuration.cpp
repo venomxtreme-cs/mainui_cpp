@@ -244,8 +244,34 @@ void CMenuOptionsMPPage::CLogosListModel::Update( )
 	}
 }
 
+// A7 build 113: forward decl - the resolver is defined further down
+// (next to UpdateAvatar), the Draw below needs it for the live refresh
+static const char *AvatarEffectivePath( const char *playerlogo );
+
 void CMenuOptionsMPPage::CMenuLogoPreview::Draw()
 {
+	// A7 build 113 (user: "logo avatar still too late to update in
+	// options"): this page's preview never watched @cl_avatargen - only
+	// the PlayerSetup copy did - so a picture imported from THIS page
+	// (Options -> Import image...) kept its stale texture until the page
+	// was re-entered. Same live refresh as PlayerSetup: on every engine
+	// bump drop the cached picture and re-read the new bytes from disk.
+	static int avGenSeen = -1;
+	int avGen = (int)EngFuncs::GetCvarFloat( "@cl_avatargen" );
+
+	if( avGen != avGenSeen )
+	{
+		avGenSeen = avGen;
+
+		const char *path = AvatarEffectivePath( EngFuncs::GetCvarString( "cl_playerlogo" ));
+
+		if( path )
+		{
+			EngFuncs::PIC_Free( path );
+			hImage = EngFuncs::PIC_Load( path, 0 );
+		}
+	}
+
 	if( !hImage )
 	{
 		// draw the background
