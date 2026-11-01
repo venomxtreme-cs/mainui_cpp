@@ -201,7 +201,7 @@ public:
 class CMenuServerInfo : public CMenuFramework
 {
 public:
-	CMenuServerInfo() : CMenuFramework( "CMenuServerInfo" ) {}
+	CMenuServerInfo() : CMenuFramework( "CMenuServerInfo" ), m_playersPending( 0 ), m_rulesPending( 0 ) {}
 
 	void Set( netadr_t adr, const char *hostname )
 	{
@@ -216,6 +216,7 @@ public:
 
 	void Show() override;
 	void Hide() override;
+	void Think( void ) override;
 
 	void DoNetworkRequests();
 
@@ -245,6 +246,17 @@ private:
 
 	CMenuPlayerListModel players_model;
 	CMenuServerRuleModel rules_model;
+
+	// A7 build 116: PlayersResponse()/RulesResponse() run on the network
+	// thread - they now fill these PENDING buffers only, and the UI thread
+	// commits them in Think() before any table draw. Rebuilding the live
+	// vectors from the callback raced the open-animation draw (the 1.36.05
+	// engine.log crash: UI_DrawString read a freed CUtlString pointer).
+	// flag set volatile: written by net thread, read+cleared by UI thread.
+	CUtlVector<player_entry_t> m_pendingPlayers;
+	CUtlVector<server_rule_t> m_pendingRules;
+	volatile int m_playersPending;
+	volatile int m_rulesPending;
 
 	char server_hostname_str[64];
 	char server_address_str[64]; // enough for both IPv4 and IPv6
@@ -284,10 +296,18 @@ void CMenuServerInfo::PlayersResponse( net_response_t *resp )
 	if( resp->response == nullptr )
 		return;
 
+	// A7 build 116: build into the pending buffer, never into the live
+	// vector - the UI thread swaps it in at the next Think(). One fill
+	// per context is expected; if a second response somehow races the
+	// unconsumed first, just drop it rather than mutate a buffer the UI
+	// thread may be mid-swap through.
+	if( m_playersPending )
+		return;
+
 	char *s = (char *)resp->response;
 
 	int count = atoi( Info_ValueForKey( s, "players" ));
-	players_model.players.EnsureCapacity( count );
+	m_pendingPlayers.EnsureCapacity( count );
 
 	for( int i = 0; i < count; i++ )
 	{
@@ -308,8 +328,11 @@ void CMenuServerInfo::PlayersResponse( net_response_t *resp )
 
 		player_entry_t entry( i, name, frags, time );
 
-		players_model.players.AddToTail( entry );
+		m_pendingPlayers.AddToTail( entry );
 	}
+
+	// publish AFTER the fill - the UI thread only reads pending when set
+	m_playersPending = 1;
 }
 
 void CMenuServerInfo::RulesResponse( net_response_t *resp )
@@ -320,11 +343,16 @@ void CMenuServerInfo::RulesResponse( net_response_t *resp )
 	if( resp->response == nullptr )
 		return;
 
+	// A7 build 116: same pending protocol as PlayersResponse - fill only,
+	// the UI thread commits in Think()
+	if( m_rulesPending )
+		return;
+
 	char *s = (char *)resp->response;
 	int count = atoi( Info_ValueForKey( s, "rules" ));
 	char *p;
 
-	rules_model.rules.EnsureCapacity( count );
+	m_pendingRules.EnsureCapacity( count );
 
 	p = strtok( s, "\\" );
 
@@ -341,10 +369,40 @@ void CMenuServerInfo::RulesResponse( net_response_t *resp )
 		rule.value.SetValue( p );
 
 		if( rule.rule != "rules" )
-			rules_model.rules.AddToTail( rule );
+			m_pendingRules.AddToTail( rule );
 
 		p = strtok( nullptr, "\\" );
 	} while( true );
+}
+
+/*
+=================
+CMenuServerInfo::Think
+
+A7 build 116: commit the network-thread fills on the UI thread.
+CWindowStack::Update calls Think() on every visible window BEFORE any
+drawing (WindowSystem.cpp), so by the time players_list/rules_list draw,
+the live vectors already hold the final rows - no more concurrent
+rebuild-under-draw (the freed-CUtlString crash in the 1.36.05 log).
+=================
+*/
+void CMenuServerInfo::Think( void )
+{
+	if( m_playersPending )
+	{
+		players_model.players.Swap( m_pendingPlayers );
+		m_pendingPlayers.RemoveAll(); // old rows land here, drop them
+		m_playersPending = 0;
+	}
+
+	if( m_rulesPending )
+	{
+		rules_model.rules.Swap( m_pendingRules );
+		m_pendingRules.RemoveAll();
+		m_rulesPending = 0;
+	}
+
+	CMenuFramework::Think();
 }
 
 void CMenuServerInfo::PingResponseFunc( net_response_t *resp )
@@ -384,6 +442,13 @@ void CMenuServerInfo::Show()
 
 	players_model.players.RemoveAll();
 	rules_model.rules.RemoveAll();
+	// A7 build 116: also drop any unconsumed pending fill from a previous
+	// open of this dialog (its context is dead anyway - new random ones
+	// are issued in DoNetworkRequests)
+	m_pendingPlayers.RemoveAll();
+	m_pendingRules.RemoveAll();
+	m_playersPending = 0;
+	m_rulesPending = 0;
 
 	players_list.SetSortingColumn( COLUMN_POSITION, true );
 }

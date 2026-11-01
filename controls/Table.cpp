@@ -549,6 +549,15 @@ void CMenuTable::DrawLine( Point p, int line, uint textColor, bool forceCol, uin
 	int i;
 	Size sz;
 
+	// A7 build 116 (user log: SIGSEGV at UI_DrawString string[0] with a
+	// stale CUtlString garbage pointer): never hand a row outside the
+	// model's [0, GetRows()) range to GetCellText - the model can't be
+	// trusted while an async response is rebuilding its vector, so a row
+	// that no longer exists renders as nothing instead of freed-memory
+	// bytes being drawn as a string pointer.
+	if( !m_pModel || line < 0 || line >= m_pModel->GetRows() )
+		return;
+
 	sz.h = rowHeight;
 	int contentOffsetY = ( rowHeight - m_scChSize ) / 2;
 

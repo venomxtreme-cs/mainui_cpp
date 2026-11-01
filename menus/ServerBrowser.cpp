@@ -281,6 +281,12 @@ public:
 
 	const char *GetCellText( int line, int column ) override
 	{
+		// A7 build 116 (same belt as ServerInfo's 112 guard): the list is
+		// repopulated/filtered while the browser draws - an out-of-range
+		// row must render empty, not read past the vector.
+		if( line < 0 || line >= servers.Count( ))
+			return NULL;
+
 		switch( column )
 		{
 		case COLUMN_PASSWORD: return servers[line].havePassword ? ART_BANNER_LOCK : NULL;
@@ -296,6 +302,10 @@ public:
 
 	bool GetCellColors( int line, int column, unsigned int &textColor, bool &force) const override
 	{
+		// A7 build 116: parity with GetCellText's bounds guard
+		if( line < 0 || line >= servers.Count( ))
+			return false;
+
 		const server_t &s = servers[line];
 		const float fadeTime = 1.5f;
 		const uint green = PackRGB( 64, 255, 64 );
@@ -345,6 +355,8 @@ public:
 
 	bool IsHavePassword( int line )
 	{
+		if( line < 0 || line >= servers.Count( ))
+			return false;
 		return servers[line].havePassword;
 	}
 
