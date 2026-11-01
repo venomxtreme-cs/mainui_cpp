@@ -381,11 +381,11 @@ void CMenuColorPickerDialog::Draw()
 {
 	UI_FillRect( 0, 0, gpGlobals->scrWidth, gpGlobals->scrHeight, 0x40000000 );
 
-	EngFuncs::FillRGBA( m_scPos.x, m_scPos.y, m_scSize.w, m_scSize.h, 20, 20, 20, 235 );
+	// A7 retheme: olive panel + raised bevel (cs16.css dialog)
+	EngFuncs::FillRGBA( m_scPos.x, m_scPos.y, m_scSize.w, m_scSize.h, 74, 89, 66, 245 );
+	UI_DrawBevel( m_scPos, m_scSize, false );
 
-	UI_DrawRectangle( m_scPos, m_scSize, uiInputFgColor );
-
-	UI_DrawString( font, m_scPos.x, m_scPos.y + Layout::PAD * uiStatic.scaleY, m_scSize.w, Layout::TITLE_H * uiStatic.scaleY, L( "Logo Color" ), uiColorHelp, m_scChSize, QM_CENTER, ETF_SHADOW );
+	UI_DrawString( font, m_scPos.x, m_scPos.y + Layout::PAD * uiStatic.scaleY, m_scSize.w, Layout::TITLE_H * uiStatic.scaleY, L( "Logo Color" ), uiColorText, m_scChSize, QM_CENTER, ETF_SHADOW );
 
 	EngFuncs::FillRGBA( m_scPos.x + Layout::PAD * uiStatic.scaleX, m_scPos.y + ( Layout::PAD + Layout::TITLE_H ) * uiStatic.scaleY, m_scSize.w - Layout::PAD * 2 * uiStatic.scaleX, 1, 255, 255, 255, 40 );
 
@@ -397,7 +397,7 @@ void CMenuColorPickerDialog::Draw()
 	{
 		Point sp = midSpins[i]->GetRenderPosition();
 		Size  sz = midSpins[i]->GetRenderSize();
-		UI_DrawString( font, sp.x, sp.y - fontH - labelGap, sz.w, fontH, midLabels[i], uiColorHelp, m_scChSize, QM_LEFT, ETF_SHADOW );
+		UI_DrawString( font, sp.x, sp.y - fontH - labelGap, sz.w, fontH, midLabels[i], uiColorText, m_scChSize, QM_LEFT, ETF_SHADOW );
 	}
 
 	for( int i = 0; i < 3; i++ )
@@ -407,7 +407,7 @@ void CMenuColorPickerDialog::Draw()
 		int lw = m_labels[i].size.w * uiStatic.scaleX;
 		int lh = m_labels[i].size.h * uiStatic.scaleY;
 
-		UI_DrawString( font, lx, ly, lw, lh, m_labels[i].text, uiColorHelp, m_scChSize, QM_LEFT, ETF_SHADOW );
+		UI_DrawString( font, lx, ly, lw, lh, m_labels[i].text, uiColorText, m_scChSize, QM_LEFT, ETF_SHADOW );
 	}
 
 	BaseClass::Draw();

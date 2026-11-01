@@ -32,6 +32,8 @@ public:
 	bool KeyDown( int key ) override;
 	bool KeyUp( int key ) override;
 	void VidInit() override;
+	void CalcSizes() override;
+	int GetVisualWidth( void ) const override;
 	void Draw() override;
 	void UpdateEditable() override;
 	void LinkCvar( const char *name ) override

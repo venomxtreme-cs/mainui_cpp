@@ -30,6 +30,12 @@ class CMenuColorPickerDialog : public CMenuBaseWindow
 {
 public:
 	typedef CMenuBaseWindow BaseClass;
+
+	// A7 build 60: framed title panel + title text = a dialog; its OK/
+	// Cancel PicButtons get the same chrome as every other dialog's buttons
+	// (only applies when button art is missing)
+	bool IsFloatDialog() const override { return true; }
+
 	CMenuColorPickerDialog();
 
 	void Show( const byte ( *stripes )[3], int stripeCount, bool horizontal, HIMAGE logoImage );

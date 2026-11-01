@@ -30,13 +30,34 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 #include "gameinfo.h"
 #include "AnimatedBanner.h"
 #include "MovieBanner.h"
+#include "FontRenderer.h"
 
-#define ART_MINIMIZE_N	"gfx/shell/min_n"
-#define ART_MINIMIZE_F	"gfx/shell/min_f"
-#define ART_MINIMIZE_D	"gfx/shell/min_d"
-#define ART_CLOSEBTN_N	"gfx/shell/cls_n"
-#define ART_CLOSEBTN_F	"gfx/shell/cls_f"
-#define ART_CLOSEBTN_D	"gfx/shell/cls_d"
+// classic Counter-Strike game-menu text style: flat Tahoma, no glow.
+// build 91: the reference menu rows are ~16px font with ~27px spacing
+// (user: menu items "too big in xash") - keep the hit box tall enough that
+// a full line can never wrap onto the next row.
+static void ApplyMainMenuTextStyle( CMenuPicButton &button )
+{
+	button.SetCustomTextStyle( CFontBuilder( "Tahoma", 16, 400 ).Create(), 16 );
+	button.charSize = 16;
+	// text-sized hit box, so the tight classic stack never overlaps
+	button.SetSize( 560, 26 );
+}
+
+// A7 user request: the Friends button opens the Steam sign-in/friend-list
+// screen - an engine command that raises a WebView over the running game.
+// The screen saves friends/names.txt for the menu and the scoreboard.
+static void UI_SteamFriendsScreen( void )
+{
+	EngFuncs::ClientCmd( false, "steamfriends\n" );
+}
+
+// A7 build 91: the Console entry raises the engine's floating console
+// window (toggleconsole opens the window in the menu / paused game)
+static void UI_ConsoleWindow( void )
+{
+	EngFuncs::ClientCmd( false, "toggleconsole\n" );
+}
 
 class CMenuMain: public CMenuFramework
 {
@@ -45,45 +66,42 @@ public:
 
 	bool KeyDown( int key ) override;
 
+	// A7 build 87: the only window that keeps the GameUI sound set -
+	// every other window uses the original GoldSource launch_* sounds
+	bool IsMainMenuRoot() const override { return true; }
+
 	void QuitDialogCb();
 
 private:
 	void _Init() override;
 	void _VidInit( ) override;
-	void Think() override;
 
-	void VidInit(bool connected);
+	void VidInit( bool connected );
 
 	void DisconnectCb();
 	void DisconnectDialogCb();
-	void HazardCourseDialogCb();
-	void HazardCourseCb();
 
-	CMenuAnimatedBanner animatedBanner;
-	CMenuMovieBanner movieBanner;
-
-	CMenuPicButton	console;
 	CMenuPicButton	resumeGame;
 	CMenuPicButton	disconnect;
+	// build 90: in-game "Player list" entry (reference screenshot 3:
+	// Resume game / Disconnect / Player list ...)
+	CMenuPicButton	playerList;
 	CMenuPicButton	newGame;
-	CMenuPicButton	hazardCourse;
+	CMenuPicButton	findServers;
+	CMenuPicButton	randomServer;
 	CMenuPicButton	configuration;
-	CMenuPicButton	saveRestore;
-	CMenuPicButton	multiPlayer;
-	CMenuPicButton	customGame;
-	CMenuPicButton	readme;
-	CMenuPicButton	previews;
+	// A7 build 91: "Console" entry - raises the engine's floating console
+	// window (the Android equivalent of the PC `~` key)
+	CMenuPicButton	consoleButton;
 	CMenuPicButton	quit;
 
-	// buttons on top right. Maybe should be drawn if fullscreen == 1?
-	CMenuBitmap	minimizeBtn;
-	CMenuBitmap	quitButton;
+	// A7 build 63: real-menu furniture (video reference): the CS logo
+	// bottom-left and the Friends button bottom-right
+	CMenuBitmap	csLogo;
+	CMenuPicButton	friendsButton;
 
 	// quit dialog
 	CMenuYesNoMessageBox dialog;
-
-	bool bTrainMap;
-	bool bCustomGame;
 };
 
 void CMenuMain::QuitDialogCb()
@@ -113,13 +131,6 @@ void CMenuMain::DisconnectDialogCb()
 	dialog.Show();
 }
 
-void CMenuMain::HazardCourseDialogCb()
-{
-	dialog.onPositive = VoidCb( &CMenuMain::HazardCourseCb );;
-	dialog.SetMessage( L( "StringsList_234" ) );
-	dialog.Show();
-}
-
 /*
 =================
 CMenuMain::Key
@@ -145,169 +156,109 @@ bool CMenuMain::KeyDown( int key )
 
 /*
 =================
-UI_Main_HazardCourse
+CMenuMain::_Init
 =================
 */
-void CMenuMain::HazardCourseCb()
-{
-	if( EngFuncs::GetCvarFloat( "host_serverstate" ) && EngFuncs::GetCvarFloat( "maxplayers" ) > 1 )
-		EngFuncs::HostEndGame( "end of the game" );
-
-	EngFuncs::CvarSetValue( "skill", 1.0f );
-	EngFuncs::CvarSetValue( "deathmatch", 0.0f );
-	EngFuncs::CvarSetValue( "teamplay", 0.0f );
-	EngFuncs::CvarSetValue( "pausable", 1.0f ); // singleplayer is always allowing pause
-	EngFuncs::CvarSetValue( "coop", 0.0f );
-	EngFuncs::CvarSetValue( "maxplayers", 1.0f ); // singleplayer
-
-	EngFuncs::PlayBackgroundTrack( NULL, NULL );
-
-	EngFuncs::ClientCmd( false, "hazardcourse\n" );
-}
-
 void CMenuMain::_Init( void )
 {
-	if( gMenu.m_gameinfo.trainmap[0] && stricmp( gMenu.m_gameinfo.trainmap, gMenu.m_gameinfo.startmap ) != 0 )
-		bTrainMap = true;
-	else bTrainMap = false;
-
-	if( EngFuncs::GetCvarFloat( "host_allow_changegame" ))
-		bCustomGame = true;
-	else bCustomGame = false;
-
-	// console
-	console.SetNameAndStatus( L( "GameUI_Console" ), NULL );
-	console.iFlags |= QMF_NOTIFY;
-	console.SetPicture( PC_CONSOLE );
-	console.SetVisibility( gpGlobals->developer );
-	SET_EVENT_MULTI( console.onReleased,
-	{
-		UI_SetActiveMenu( false );
-		EngFuncs::KEY_SetDest( KEY_CONSOLE );
-	});
-
-	resumeGame.SetNameAndStatus( L( "GameUI_GameMenu_ResumeGame" ), L( "StringsList_188" ) );
-	resumeGame.SetPicture( PC_RESUME_GAME );
+	// A7 remake: the original CS 1.6 game menu is a plain left-aligned text
+	// list over the collage - New Game, Find Servers, Change game, Options,
+	// Quit (plus Resume/Disconnect while connected). No banner art, no logo
+	// bitmap, no movie - those are xash3d extras. Player setup lives only
+	// in the Options dialog's Multiplayer tab (user request).
+	resumeGame.SetNameAndStatus( L( "GameUI_GameMenu_ResumeGame" ), NULL );
 	resumeGame.iFlags |= QMF_NOTIFY;
+	ApplyMainMenuTextStyle( resumeGame );
 	resumeGame.onReleased = UI_CloseMenu;
 
-	disconnect.SetNameAndStatus( L( "GameUI_GameMenu_Disconnect" ), L( "Disconnect from server." ) );
-	disconnect.SetPicture( PC_DISCONNECT );
+	disconnect.SetNameAndStatus( L( "GameUI_GameMenu_Disconnect" ), NULL );
 	disconnect.iFlags |= QMF_NOTIFY;
+	ApplyMainMenuTextStyle( disconnect );
 	disconnect.onReleased = VoidCb( &CMenuMain::DisconnectDialogCb );
 
-	newGame.SetNameAndStatus( L( "GameUI_NewGame" ), L( "StringsList_189" ) );
-	newGame.SetPicture( PC_NEW_GAME );
+	// build 90: "Current players" window (reference picture 3) - shown in
+	// the in-game list only, right under Disconnect like in GoldSource
+	playerList.SetNameAndStatus( L( "Player list" ), NULL );
+	playerList.iFlags |= QMF_NOTIFY;
+	ApplyMainMenuTextStyle( playerList );
+	playerList.onReleased = UI_PlayerList_Menu;
+
+	newGame.SetNameAndStatus( L( "GameUI_NewGame" ), NULL );
 	newGame.iFlags |= QMF_NOTIFY;
-	newGame.onReleased = UI_NewGame_Menu;
+	ApplyMainMenuTextStyle( newGame );
+	newGame.onReleased = UI_NewGame_Menu; // build 90: tabbed New Game dialog (ref picture 2)
 
-	hazardCourse.SetNameAndStatus( L( "GameUI_TrainingRoom" ), L( "StringsList_190" ) );
-	hazardCourse.SetPicture( PC_HAZARD_COURSE );
-	hazardCourse.iFlags |= QMF_NOTIFY;
-	hazardCourse.onReleasedClActive = VoidCb( &CMenuMain::HazardCourseDialogCb );
-	hazardCourse.onReleased = VoidCb( &CMenuMain::HazardCourseCb );
+	findServers.SetNameAndStatus( L( "Find Servers" ), NULL );
+	findServers.iFlags |= QMF_NOTIFY;
+	ApplyMainMenuTextStyle( findServers );
+	findServers.onReleased = UI_InternetGames_Menu;
 
-	multiPlayer.SetNameAndStatus( L( "GameUI_Multiplayer" ), L( "StringsList_198" ) );
-	multiPlayer.SetPicture( PC_MULTIPLAYER );
-	multiPlayer.iFlags |= QMF_NOTIFY;
-	multiPlayer.onReleased = UI_MultiPlayer_Menu;
+	// A7 build 63: video reference - the real menu's third item is
+	// "Random server" (join a random entry of the loaded internet list);
+	// the Change game dialog is gone, like in the original GameMenu.res.
+	// build 90: no QMF_NOTIFY status string - its status text drew at a
+	// fixed offset and ran/stuck into the neighbour rows (user: "remove
+	// random"); the reference menu shows the entry with no status hint.
+	randomServer.SetNameAndStatus( L( "Random server" ), NULL );
+	randomServer.iFlags |= QMF_NOTIFY;
+	ApplyMainMenuTextStyle( randomServer );
+	randomServer.onReleased = UI_RandomServer;
 
-	configuration.SetNameAndStatus( L( "GameUI_Options" ), L( "StringsList_193" ) );
-	configuration.SetPicture( PC_CONFIG );
+	// build 90: reference has the Counter-Strike word-mark bottom-left,
+	// plain over the collage - NO black tint/background (user: "logo
+	// doesn't have black color background"). colorBase stays default so
+	// CMenuBitmap::VidInit's SetDefault(white) applies.
+	csLogo.SetPicture( "resource/game_menu.tga" );
+	// A7 build 93: QM_DRAWNORMAL goes to PIC_Draw with no blending, which
+	// paints the TGA's transparent pixels black - the word-mark needs the
+	// alpha-blended path (user: "logo has black background - fix it")
+	csLogo.SetRenderMode( QM_DRAWTRANS );
+	csLogo.iFlags |= QMF_INACTIVE; // art, not an action
+	friendsButton.szName = L( "Friends" );
+	ApplyMainMenuTextStyle( friendsButton );
+	// A7 user request: friends is a real screen - the engine command opens
+	// the Steam login WebView, which saves the friend list for the menu and
+	// the scoreboard
+	friendsButton.onReleased = UI_SteamFriendsScreen;
+
+	configuration.SetNameAndStatus( L( "GameUI_Options" ), NULL );
 	configuration.iFlags |= QMF_NOTIFY;
+	ApplyMainMenuTextStyle( configuration );
 	configuration.onReleased = UI_Options_Menu;
 
-	saveRestore.iFlags |= QMF_NOTIFY;
+	// A7 build 91: opens the engine's floating console window (toggleconsole
+	// now raises the window instead of the full-screen console) - the
+	// Android equivalent of the PC `~` key, an Options-like menu entry
+	consoleButton.SetNameAndStatus( L( "Console" ), NULL );
+	consoleButton.iFlags |= QMF_NOTIFY;
+	ApplyMainMenuTextStyle( consoleButton );
+	consoleButton.onReleased = UI_ConsoleWindow;
 
-	customGame.SetNameAndStatus( L( "GameUI_ChangeGame" ), L( "StringsList_530" ) );
-	customGame.SetPicture( PC_CUSTOM_GAME );
-	customGame.iFlags |= QMF_NOTIFY;
-	customGame.onReleased = UI_CustomGame_Menu;
-
-	// TODO: add readme screen later
-	readme.SetNameAndStatus( L("View Readme"), L( "StringsList_194" ) );
-	readme.SetPicture( PC_VIEW_README );
-	readme.iFlags |= QMF_NOTIFY;
-
-	previews.SetNameAndStatus( L( "Previews" ), L( "StringsList_400" ) );
-	previews.SetPicture( PC_PREVIEWS );
-	previews.iFlags |= QMF_NOTIFY;
-	SET_EVENT( previews.onReleased, EngFuncs::ShellExecute( MenuStrings[ IDS_MEDIA_PREVIEWURL ], NULL, false ) );
-
-	quit.SetNameAndStatus( L( "GameUI_GameMenu_Quit" ), L( "GameUI_QuitConfirmationText" ) );
-	quit.SetPicture( PC_QUIT );
+	quit.SetNameAndStatus( L( "GameUI_GameMenu_Quit" ), NULL );
 	quit.iFlags |= QMF_NOTIFY;
+	ApplyMainMenuTextStyle( quit );
 	quit.onReleased = VoidCb( &CMenuMain::QuitDialogCb );
 
-	quitButton.SetPicture( ART_CLOSEBTN_N, ART_CLOSEBTN_F, ART_CLOSEBTN_D );
-	quitButton.iFlags = QMF_MOUSEONLY;
-	quitButton.eFocusAnimation = QM_HIGHLIGHTIFFOCUS;
-	quitButton.onReleased = VoidCb( &CMenuMain::QuitDialogCb );
-
-	minimizeBtn.SetPicture( ART_MINIMIZE_N, ART_MINIMIZE_F, ART_MINIMIZE_D );
-	minimizeBtn.iFlags = QMF_MOUSEONLY;
-	minimizeBtn.eFocusAnimation = QM_HIGHLIGHTIFFOCUS;
-	minimizeBtn.onReleased.SetCommand( false, "minimize\n" );
-
-	if ( gMenu.m_gameinfo.gamemode == GAME_MULTIPLAYER_ONLY || gMenu.m_gameinfo.startmap[0] == 0 )
-		newGame.SetGrayed( true );
-
-	if ( gMenu.m_gameinfo.gamemode == GAME_SINGLEPLAYER_ONLY )
-		multiPlayer.SetGrayed( true );
-
-	// if ( gMenu.m_gameinfo.gamemode == GAME_MULTIPLAYER_ONLY )
-	// {
-	// 	saveRestore.SetGrayed( true );
-	// 	hazardCourse.SetGrayed( true );
-	// }
-
-	// too short execute string - not a real command
-	if( strlen( MenuStrings[IDS_MEDIA_PREVIEWURL] ) <= 3 )
-	{
-		previews.SetGrayed( true );
-	}
-
-	// server.dll needs for reading savefiles or startup newgame
+	// server.dll is needed to start a new game
 	if( !EngFuncs::CheckGameDll( ))
-	{
-		saveRestore.SetGrayed( true );
-		hazardCourse.SetGrayed( true );
 		newGame.SetGrayed( true );
-	}
-
-	if( FBitSet( gMenu.m_gameinfo.flags, GFL_ANIMATED_TITLE ))
-	{
-		if( animatedBanner.TryLoad())
-			AddItem( animatedBanner );
-	}
-	else
-	{
-		AddItem( movieBanner );
-	}
 
 	dialog.Link( this );
 
-	AddItem( banner );
-	AddItem( console );
-	AddItem( disconnect );
 	AddItem( resumeGame );
+	AddItem( disconnect );
+	AddItem( playerList ); // build 90: in-game-only, visibility gated in VidInit
 	AddItem( newGame );
-
-	if ( bTrainMap )
-		AddItem( hazardCourse );
-
+	AddItem( findServers );
+	AddItem( randomServer );
 	AddItem( configuration );
-	AddItem( saveRestore );
-	AddItem( multiPlayer );
-
-	if ( bCustomGame )
-		AddItem( customGame );
-
-	AddItem( readme );
-	AddItem( previews );
+	AddItem( consoleButton );
 	AddItem( quit );
-	AddItem( minimizeBtn );
-	AddItem( quitButton );
+	// A7 build 64: build 63 set the members up but never registered
+	// them - the CS logo (bottom-left) and the Friends button
+	// (bottom-right) from the video were configured yet never shown.
+	AddItem( csLogo );
+	AddItem( friendsButton );
 }
 
 /*
@@ -317,108 +268,73 @@ UI_Main_Init
 */
 void CMenuMain::VidInit( bool connected )
 {
-	int hoffset = ( 70 / 640.0 ) * 1024.0;
+	// A7 build 91: compact reference layout - ~16px rows with 28px spacing,
+	// left-aligned column ending just above the word-mark row, so the stack
+	// grows upward and always fits (user: menu items "too big in xash").
+	int x = 36;
+	int ygap = 28;
 
-	// in original menu Previews is located at specific point
-	int previews_voffset = ( 404 / 480.0 ) * 768.0;
+	// build 90: logo stays plain bottom-left over the collage; Friends on
+	// the bottom bar (right)
+	csLogo.SetRect( x, size.h - 72, 236, 37 );
+	friendsButton.SetRect( size.w - 150, 706, 130, 28 );
 
-	// no visible console button gap
-	int ygap = (( 404 - 373 ) / 480.0 ) * 768.0;
+	// A7 build 105 (user: "console menu that in main menu are in down of
+	// options, move it to friends menu in up of him"): the Console entry
+	// leaves the New game..Quit column and sits directly ABOVE the
+	// Friends button on the right edge
+	consoleButton.SetRect( size.w - 150, 706 - 34, 130, 28 );
 
-	// statically positioned items
-	minimizeBtn.SetRect( uiStatic.width - 72, 13, 32, 32 );
-	quitButton.SetRect( uiStatic.width - 36, 13, 32, 32 );
-
-	previews.SetCoord( hoffset, previews_voffset );
-	quit.SetCoord( hoffset, previews_voffset + ygap );
-
-	// let's start calculating positions
-	int yoffset = previews_voffset - ygap;
-
-	readme.SetCoord( hoffset, yoffset );
-	yoffset -= ygap;
-
-	if( bCustomGame )
-	{
-		customGame.SetCoord( hoffset, yoffset );
-		yoffset -= ygap;
-	}
-
-	multiPlayer.SetCoord( hoffset, yoffset );
-	yoffset -= ygap;
-
-	bool single = gpGlobals->maxClients < 2;
-
-	saveRestore.SetCoord( hoffset, yoffset );
-	yoffset -= ygap;
-
-	configuration.SetCoord( hoffset, yoffset );
-	yoffset -= ygap;
-
-	if( bTrainMap )
-	{
-		hazardCourse.SetCoord( hoffset, yoffset );
-		yoffset -= ygap;
-	}
-
-	newGame.SetCoord( hoffset, yoffset );
-	yoffset -= ygap;
+	// rows: [Random server | blank] when out of a game, or [blank +
+	// Resume/Disconnect/Player list] while connected, then one blank
+	// spacer row, then the shared bottom group New Game..Quit
+	// (build 91: Random server has no row while connected - its slot is
+	// left blank like the reference in-game menu)
+	// build 105: Console moved out of the column (it sits above Friends on
+	// the right), so the stack is New Game, Find Servers, Options, Quit
+	const int bottomRows = 4;
+	int rows = bottomRows + 2 + ( connected ? 3 : 0 ); // + Random row + spacer
+	int y = ( size.h - 84 ) - 44 - ( rows - 1 ) * ygap;
 
 	if( connected )
 	{
-		resumeGame.SetCoord( hoffset, yoffset );
-		yoffset -= ygap;
-
-		if( !single )
-		{
-			disconnect.SetCoord( hoffset, yoffset );
-			yoffset -= ygap;
-		}
-	}
-
-	console.SetCoord( hoffset, yoffset );
-	yoffset -= ygap;
-
-	// now figure out what's visible
-	resumeGame.SetVisibility( connected );
-	disconnect.SetVisibility( connected && !single );
-
-	// they exist in the original and can be mistakenly clicked
-	newGame.SetVisibility( false );
-
-	if( connected && single )
-	{
-		saveRestore.SetNameAndStatus( L( "Save\\Load Game" ), L( "StringsList_192" ) );
-		saveRestore.SetPicture( PC_SAVE_LOAD_GAME );
-		saveRestore.onReleased = UI_SaveLoad_Menu;
+		y += ygap; // top slot stays blank while connected
+		resumeGame.SetCoord( x, y );
+		disconnect.SetCoord( x, y + ygap );
+		playerList.SetCoord( x, y + ygap * 2 );
+		// A7 build 92: skip PAST the player-list row and its blank spacer -
+		// build 91 added only 2 gaps, so "New Game" landed on the exact
+		// "Player list" row and the two entries drew on top of each other
+		y += ygap * 4;
 	}
 	else
 	{
-		saveRestore.SetNameAndStatus( L( "GameUI_LoadGame" ), L( "StringsList_191" ) );
-		saveRestore.SetPicture( PC_LOAD_GAME );
-		saveRestore.onReleased = UI_LoadGame_Menu;
+		randomServer.SetCoord( x, y );
+		y += ygap * 2; // one row + one blank spacer
 	}
+
+	newGame.SetCoord( x, y );
+	findServers.SetCoord( x, y + ygap );
+	configuration.SetCoord( x, y + ygap * 2 );
+	// build 105: Console is parked above Friends (set at the top of this
+	// function), the column now ends with Quit
+	quit.SetCoord( x, y + ygap * 3 );
+
+	// now figure out what's visible
+	resumeGame.SetVisibility( connected );
+	disconnect.SetVisibility( connected );
+	playerList.SetVisibility( connected );
+	newGame.SetVisibility( true );
+	findServers.SetVisibility( true );
+	// build 91: hidden while connected (blank slot in the in-game menu)
+	randomServer.SetVisibility( !connected );
+	configuration.SetVisibility( true );
+	consoleButton.SetVisibility( true );
 }
 
 void CMenuMain::_VidInit()
 {
 	VidInit( CL_IsActive() );
-}
-
-void CMenuMain::Think()
-{
-	if( gpGlobals->developer )
-	{
-		if( !console.IsVisible( ))
-			console.Show();
-	}
-	else
-	{
-		if( console.IsVisible( ))
-			console.Hide();
-	}
-
-	CMenuFramework::Think();
 }
 
 ADD_MENU( menu_main, CMenuMain, UI_Main_Menu );

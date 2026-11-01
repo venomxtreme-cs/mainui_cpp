@@ -94,6 +94,10 @@ public:
 	// Get item default cursor (flags may override this)
 	virtual VGUI_DefaultCursor CursorAction() { return dc_arrow; }
 
+	// A7 build 91: F2/F3 switch tab pages in tabbed dialogs - only the
+	// tab view reports itself, everything else stays NULL
+	virtual class CMenuTabView *GetTabView( void ) { return NULL; }
+
 	// Toggle visibiltiy.
 	inline void ToggleVisibility()
 	{
@@ -126,12 +130,38 @@ public:
 	void CalcPosition( void );
 
 	// Calculate scale size(item size, char size)
-	void CalcSizes( void );
+	// A7 float dialogs: virtual so controls that cache render-derived state
+	// (CheckBox/Switch label positions, Switch segment rects) can refresh it
+	// when RecalcRenderTree recomposes the tree after a shift or drag
+	virtual void CalcSizes( void );
+
+	// A7 floating dialogs: refresh render position/size after the logical
+	// pos changed without a full VidInit (ShiftContent). Holders override
+	// to walk children top-down.
+	virtual void RecalcRenderTree( void );
+
+	// A7 build 58 fit-to-screen: uniformly scale this item's layout
+	// (position, size and font) so float dialogs fill most of the screen
+	// on every device. Holders override to walk children too.
+	virtual void ScaleLayout( float k );
+
+	// A7 build 62: rightmost visual extent in layout coords. Some controls
+	// draw text OUTSIDE their declared rect (checkbox/switch labels at
+	// 1.25x/1.5x width, PicButton QMF_NOTIFY status column), so a frame
+	// wrapped around size.w clipped those labels ("Gamepad Invert", the
+	// touch hub's description column). Default: the declared width.
+	virtual int GetVisualWidth( void ) const;
 
 	// Play sound
 	void PlayLocalSound( const char *name )
 	{
 		if( iFlags & QMF_SILENT )
+			return;
+
+		// A7 build 64: silent slots are "" (real GameUI has no
+		// menu open/close sound) - never hand an empty name to
+		// the engine.
+		if( !name || !name[0] )
 			return;
 
 		EngFuncs::PlayLocalSound( name );

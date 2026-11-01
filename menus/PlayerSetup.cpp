@@ -29,6 +29,7 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 #include "PlayerModelView.h"
 #include "StringVectorModel.h"
 #include "ColorPickerDialog.h"
+#include "BaseMenu.h"       // build 101: uiFileDialogGlobal / UI_FileDialog_Menu (Import image...)
 
 #define ART_BANNER		"gfx/shell/head_customize"
 
@@ -49,6 +50,16 @@ public:
 	void ShowColorPicker();
 	void OnColorPickerOk();
 	void SaveAndPopMenu() override;
+
+	// A7 round 100: the scoreboard logo is resolved AUTOMATICALLY
+	// (imported image -> my Steam photo -> *sid photo -> logos/
+	// fallback), so this screen previews the effective picture and
+	// offers the import button instead of a picker
+	void UpdateAvatar();
+	void OnAvatarImport();
+	// build 101: in-app file list callback (PC-style "search the bmps")
+	static void AvatarImportCb( bool success );
+	void EnsurePlayerLogo();
 
 	class CModelListModel : public CStringVectorModel
 	{
@@ -115,6 +126,10 @@ public:
 	bool			m_horizontal;
 	bool			m_logoColorable;
 
+	// A7 round 100: automatic scoreboard logo - preview + import button
+	CMenuPicButton		btnAvatarImport;
+	CMenuLogoPreview	avatarImage;
+
 	void ParseLogoColorCvar();
 	void WriteLogoColorCvar();
 
@@ -123,8 +138,33 @@ public:
 	bool hideModels, hideLogos;
 };
 
+// A7 build 111: resolver is defined further down (next to UpdateAvatar)
+static const char *AvatarEffectivePath( const char *playerlogo );
+
 void CMenuPlayerSetup::CMenuLogoPreview::Draw()
 {
+	// A7 build 111: LIVE update - the engine bumps @cl_avatargen when the
+	// activity finished writing a picked/imported logo, so re-resolve and
+	// reload the preview on a following frame instead of only when this
+	// screen is re-opened ("put any logo ... make it update in options").
+	// The cached texture was already freed engine-side, so the reload
+	// below reads the new bytes from disk.
+	static int avGenSeen = -1;
+	int avGen = (int)EngFuncs::GetCvarFloat( "@cl_avatargen" );
+
+	if( avGen != avGenSeen )
+	{
+		avGenSeen = avGen;
+
+		const char *path = AvatarEffectivePath( EngFuncs::GetCvarString( "cl_playerlogo" ));
+
+		if( path )
+		{
+			EngFuncs::PIC_Free( path );
+			hImage = EngFuncs::PIC_Load( path, 0 );
+		}
+	}
+
 	if( !hImage )
 	{
 		// draw the background
@@ -179,7 +219,7 @@ void CMenuPlayerSetup::CMenuLogoPreview::Draw()
 
 	int textHeight = m_scPos.y - (m_scChSize * 1.5f);
 	uint textflags = ( iFlags & QMF_DROPSHADOW ) ? ETF_SHADOW : 0;
-	UI_DrawString( font, m_scPos.x, textHeight, m_scSize.w, m_scChSize, szName, uiColorHelp, m_scChSize, QM_LEFT, textflags | ETF_FORCECOL | ETF_NOSIZELIMIT );
+	UI_DrawString( font, m_scPos.x, textHeight, m_scSize.w, m_scChSize, szName, uiColorText, m_scChSize, QM_LEFT, textflags | ETF_FORCECOL | ETF_NOSIZELIMIT );
 
 	// draw the rectangle
 	if( eFocusAnimation == QM_HIGHLIGHTIFFOCUS && IsCurrentSelected() )
@@ -282,6 +322,15 @@ void CMenuPlayerSetup::SaveAndPopMenu()
 	}
 
 	SetConfig();
+
+	// A7 round 100: cl_playerlogo is no longer picked by hand - the
+	// scoreboard resolves imported/steam/sid pictures itself and the
+	// cvar only carries the logos/ fallback, filled in on demand. It is
+	// registered FCVAR_ARCHIVE on the client side, so the engine
+	// persists it with the rest of config.cfg
+	if( !hideLogos )
+		EnsurePlayerLogo();
+
 	CMenuFramework::SaveAndPopMenu();
 }
 
@@ -478,6 +527,95 @@ void CMenuPlayerSetup::WriteNewLogo( void )
 	EngFuncs::CvarSetValue( "@cl_logoupdate", !EngFuncs::GetCvarFloat( "@cl_logoupdate" ));
 }
 
+// A7 round 100: the picture the scoreboard will pick for me, in the
+// same order the draw code uses - imported image, my Steam photo, the
+// logos/ fallback stored in cl_playerlogo. NULL = nothing stored yet.
+static const char *AvatarEffectivePath( const char *playerlogo )
+{
+	static const char *cands[] = {
+		"media/avatars/avatar_custom.png",   // "Import image..." (Options)
+		"media/avatars/avatar_self.png",     // my Steam photo
+	};
+
+	for( size_t i = 0; i < V_ARRAYSIZE( cands ); i++ )
+	{
+		int len = 0;
+		void *buf = EngFuncs::COM_LoadFile( cands[i], &len );
+		if( buf )
+		{
+			EngFuncs::COM_FreeFile( buf );
+			return cands[i];
+		}
+	}
+
+	if( playerlogo && *playerlogo )
+		return playerlogo;
+
+	return NULL;
+}
+
+void CMenuPlayerSetup::UpdateAvatar()
+{
+	const char *path = AvatarEffectivePath( EngFuncs::GetCvarString( "cl_playerlogo" ));
+
+	avatarImage.hImage = path ? EngFuncs::PIC_Load( path, 0 ) : 0;
+}
+
+// "Import image..." - build 101 (user: "just like search bmp file like in
+// pc, not search in my phone"): the mainui file list of the pictures the
+// game folders hold (logos/, the gamedir root, media/) - PC-style open
+// dialog, no Android gallery. The engine stores the choice as
+// media/avatars/avatar_custom.png and the scoreboard picks it up (it
+// re-checks while drawn).
+void CMenuPlayerSetup::OnAvatarImport()
+{
+	static const char *pats[] = {
+		"logos/*",
+		"*.bmp",
+		"*.png",
+		"*.jpg",
+		"*.jpeg",
+		"*.tga",
+		"media/*",
+	};
+
+	for( int i = 0; i < (int)V_ARRAYSIZE( pats ); i++ )
+		Q_strncpy( uiFileDialogGlobal.patterns[i], pats[i], sizeof( uiFileDialogGlobal.patterns[i] ));
+
+	uiFileDialogGlobal.npatterns = (int)V_ARRAYSIZE( pats );
+	uiFileDialogGlobal.preview = true;
+	uiFileDialogGlobal.valid = true;
+	uiFileDialogGlobal.callback = AvatarImportCb;
+	UI_FileDialog_Menu();
+}
+
+void CMenuPlayerSetup::AvatarImportCb( bool success )
+{
+	if( !success || !uiFileDialogGlobal.result[0] )
+		return;
+
+	char cmd[512];
+	V_snprintf( cmd, sizeof( cmd ), "avatar_import \"%s\"\n", uiFileDialogGlobal.result );
+	EngFuncs::ClientCmd( true, cmd );
+}
+
+// A7 round 100: with no stored fallback, fill cl_playerlogo in from
+// logos/ so a picture shows on every server without picking anything
+void CMenuPlayerSetup::EnsurePlayerLogo()
+{
+	const char *value = EngFuncs::GetCvarString( "cl_playerlogo" );
+
+	if( value && *value )
+		return;
+
+	if( hideLogos || logosModel.GetRows() <= 0 )
+		return;
+
+	char path[1024];
+	logosModel.GetFullPath( path, sizeof( path ), 0 );
+	EngFuncs::CvarSetString( "cl_playerlogo", path );
+}
+
 /*
 =================
 UI_PlayerSetup_Init
@@ -621,6 +759,27 @@ void CMenuPlayerSetup::_Init( void )
 		btnChooseColor.SetRect( 460, logo.pos.y + logo.size.h + UI_OUTLINE_WIDTH, 200, 32 );
 		btnChooseColor.onReleased = VoidCb( &CMenuPlayerSetup::ShowColorPicker );
 
+		// A7 round 100: no picker - the preview shows the picture the
+		// scoreboard resolves by itself and the button imports a new one
+		EnsurePlayerLogo();
+
+		btnAvatarImport.SetNameAndStatus( "Import image...",
+			"Pick a picture from your gallery - it shows next to your name on the scoreboard" );
+		btnAvatarImport.SetRect( 512, btnChooseColor.pos.y + btnChooseColor.size.h + UI_OUTLINE_WIDTH, 148, 32 );
+		btnAvatarImport.onReleased = VoidCb( &CMenuPlayerSetup::OnAvatarImport );
+
+		avatarImage.hImage = 0;
+		avatarImage.stripes = NULL;
+		avatarImage.stripeCount = 0;
+		avatarImage.colorable = false;
+		avatarImage.horizontal = NULL;
+		avatarImage.szName = "";
+		avatarImage.SetRect( 460, btnAvatarImport.pos.y - 6, 44, 44 );
+
+		// refresh unconditionally so a stored/imported picture shows on
+		// first open
+		UpdateAvatar();
+
 		colorPickerDlg.Link( this );
 		colorPickerDlg.onOk = VoidCb( &CMenuPlayerSetup::OnColorPickerOk );
 	}
@@ -638,6 +797,10 @@ void CMenuPlayerSetup::_Init( void )
 		AddItem( logo );
 		AddItem( btnChooseColor );
 		AddItem( logoImage );
+
+		// A7 round 100: automatic scoreboard logo
+		AddItem( btnAvatarImport );
+		AddItem( avatarImage );
 	}
 
 	if( !(gMenu.m_gameinfo.flags & GFL_NOMODELS) )
@@ -662,6 +825,11 @@ void CMenuPlayerSetup::Reload()
 		ParseLogoColorCvar();
 		m_horizontal = EngFuncs::GetCvarFloat( "ui_logohorizontal" ) != 0.f;
 		UpdateLogo();
+
+		// A7 round 100: re-resolve after returning from a submenu - an
+		// image imported meanwhile shows up right away
+		EnsurePlayerLogo();
+		UpdateAvatar();
 	}
 	if( !hideModels ) UpdateModel();
 }

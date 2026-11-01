@@ -24,8 +24,25 @@ public:
 	CMenuTabView();
 
 	void VidInit() override;
+	// A7 build 60: tab metrics track the CURRENT strip size. Computing them
+	// in VidInit only left m_szTab stale after the float layout pass
+	// (negative-width strips like the server browser's resolve late), so
+	// strips drew/hit-tested misaligned ("disorganized").
+	void CalcSizes() override;
 	void Draw() override;
 	Point GetPositionOffset() const override;
+
+	// A7 remake: pages all live in the same content rect, so the base
+	// region test would jump to the last tab whenever the cursor enters the
+	// content. Handle the tab strip ourselves and forward mouse input to the
+	// current page only.
+	bool KeyDown( int key ) override;
+	bool KeyUp( int key ) override;
+	bool MouseMove( int x, int y ) override;
+
+	// A7 build 91: F2/F3 page switching (previous/next tab)
+	void SwitchPage( int delta );
+	CMenuTabView *GetTabView( void ) override { return this; }
 
 	inline void SetTabName( int idx, const char *name )
 	{

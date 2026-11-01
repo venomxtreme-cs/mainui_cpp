@@ -87,12 +87,22 @@ int CMenuSwitch::IsNewStateByMouseClick()
 
 void CMenuSwitch::VidInit()
 {
-	iSelectColor.SetDefault( uiPromptTextColor );
-	iBackgroundColor.SetDefault( uiColorBlack );
-	iFgTextColor.SetDefault( uiInputFgColor );
+	iSelectColor.SetDefault( uiColorAccent );         // A7: selected segment = gold
+	iBackgroundColor.SetDefault( uiColorSecondaryBg);// A7: cs16 secondary bg
+	iFgTextColor.SetDefault( uiInputFgColor );        // dark text on gold segment
 	iBgTextColor.SetDefault( uiPromptTextColor );
+	colorFocus.SetDefault( uiColorBg );               // A7: hover = lighter panel color
 
 	BaseClass::VidInit();
+}
+
+// A7 float-dialog fix: segment rects and the label position are derived
+// from the render position - refresh them inside CalcSizes (called by
+// VidInit AND RecalcRenderTree), otherwise a shifted/dragged dialog leaves
+// them behind at the pre-shift place.
+void CMenuSwitch::CalcSizes( void )
+{
+	BaseClass::CalcSizes();
 
 	CUtlVector<int> sizes;
 	int sum = 0;
@@ -120,7 +130,7 @@ void CMenuSwitch::VidInit()
 
 	for( i = 0; i < m_switches.Count( ); i++ )
 	{
-		float frac = (float)sizes[i] / (float)sum;
+		float frac = sum ? (float)sizes[i] / (float)sum : 0.0f;
 
 		m_switches[i].sz.w = m_scSize.w * frac;
 		m_switches[i].sz.h = m_scSize.h;
@@ -136,6 +146,18 @@ void CMenuSwitch::VidInit()
 
 	m_scTextSize.w = g_FontMgr->GetTextWideScaled( font, szName, m_scChSize );
 	m_scTextSize.h = m_scChSize;
+}
+
+// A7 build 62: the label sits at 1.5x the control width, OUTSIDE the
+// declared rect - include it in the float-frame bounds (see checkbox).
+int CMenuSwitch::GetVisualWidth( void ) const
+{
+	int w = (int)( size.w * 1.5f );
+
+	if( uiStatic.scaleX > 0.01f )
+		w += (int)( m_scTextSize.w / uiStatic.scaleX );
+
+	return w;
 }
 
 bool CMenuSwitch::KeyUp( int key )
@@ -205,7 +227,7 @@ void CMenuSwitch::Draw( void )
 	uint textflags = (iFlags & QMF_DROPSHADOW) ? ETF_SHADOW : 0;
 
 	uint selectColor = iSelectColor;
-	UI_DrawString( font, m_scTextPos, m_scTextSize, szName, uiColorHelp, m_scChSize, eTextAlignment, textflags | ETF_FORCECOL );
+	UI_DrawString( font, m_scTextPos, m_scTextSize, szName, uiColorText, m_scChSize, eTextAlignment, textflags | ETF_FORCECOL );
 
 	if( szStatusText && iFlags & QMF_NOTIFY )
 	{
@@ -269,8 +291,8 @@ void CMenuSwitch::Draw( void )
 		}
 	}
 
-	// draw rectangle
-	UI_DrawRectangle( m_scPos, m_scSize, uiInputFgColor );
+	// draw rectangle (A7: sunken bevel)
+	UI_DrawBevel( m_scPos, m_scSize, true );
 }
 
 void CMenuSwitch::UpdateEditable()

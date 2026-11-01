@@ -29,6 +29,7 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 #include "SpinControl.h"
 #include "StringArrayModel.h"
 #include "DropDown.h"
+#include "Action.h" // A7: friendsHint label in the Friends tab
 
 #define ART_BANNER_INET     "gfx/shell/head_inetgames"
 #define ART_BANNER_LAN      "gfx/shell/head_lan"
@@ -37,7 +38,7 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 
 #define MAX_PING 9.999f
 #define FILTER_MAX_MAPS 16
-#define INTERNET_TAB_COUNT 4  // number of internet tabs; valid indices are 0..3
+#define INTERNET_TAB_COUNT 6  // original GameUI row: Internet/Favorites/History/Spectate/LAN/Friends
 
 class CMenuServerBrowser;
 
@@ -399,6 +400,14 @@ public:
 	void ParseServerListFromFile( const char *filename, CUtlVector<favlist_entry_t> &list );
 	void SaveServerListToFile( const char *filename, const CUtlVector<favlist_entry_t> &list );
 	void QueryServerList( const CUtlVector<favlist_entry_t> &list );
+
+	// A7: the original GameUI Friends tab, filled from the file the
+	// Steam friends WebView screen writes (<gamedir>/friends/servers.txt);
+	// returns true when the file changed since the previous read
+	bool LoadFriendsTab( void );
+
+	// shows the empty-tab caption only while the Friends tab has no rows
+	void UpdateFriendsHint( void );
 	void FavoriteServer( void );
 	void MaybeEnableFavoriteButton( void );
 	void ToggleFavoriteButton( bool en );
@@ -414,7 +423,6 @@ public:
 	static void Connect( server_t &server );
 
 	CMenuPicButton *joinGame;
-	CMenuPicButton *createGame;
 	CMenuPicButton *refresh;
 	CMenuPicButton *viewGameInfo;
 	CMenuPicButton *favorite;
@@ -430,6 +438,12 @@ public:
 	CMenuYesNoMessageBox msgBox;
 	CMenuTable	gameList;
 	CMenuGameListModel gameListModel;
+	// A7: caption inside the Friends tab while it is still empty (shows up
+	// until the Steam friends screen has saved servers.txt)
+	CMenuAction friendsHint;
+	// last bytes read from friends/servers.txt - the file itself is the
+	// change oracle for the Friends tab (no second server_t list needed)
+	CUtlString m_sFriendsRaw;
 	CMenuCheckBox showip;
 
 	CMenuYesNoMessageBox askPassword;
@@ -486,6 +500,29 @@ void UI_InternetGames_Menu( void )
 	menu_internetgames->SetLANOnly( false );
 
 	UI_ServerBrowser_Menu();
+}
+
+/*
+=================
+UI_RandomServer
+
+A7 build 63: "Random server" main-menu item (matches the real menu in
+the user's video reference) - joins a random entry of the internet list
+that is already loaded; opens the server browser when the list is still
+empty so the user can refresh it.
+=================
+*/
+void UI_RandomServer( void )
+{
+	CUtlVector<server_t> &list = menu_internetgames->gameListModel.servers;
+
+	if( !list.Count( ))
+	{
+		UI_InternetGames_Menu();
+		return;
+	}
+
+	CMenuServerBrowser::Connect( list[EngFuncs::RandomLong( 0, list.Count() - 1 )] );
 }
 
 void UI_LanGame_Menu( void )
@@ -807,9 +844,8 @@ void CMenuServerBrowser::FavoriteServer()
 
 void CMenuServerBrowser::MaybeEnableFavoriteButton( void )
 {
-	bool is_nat = EngFuncs::GetCvarFloat( "cl_nat" ) > 0;
-
-	favorite->SetGrayed( is_nat );
+	// favorites work the same in Direct and NAT modes
+	favorite->SetGrayed( false );
 }
 
 void CMenuServerBrowser::ToggleFavoriteButton( bool en )
@@ -941,9 +977,222 @@ void CMenuServerBrowser::QueryServerList( const CUtlVector<favlist_entry_t> &lis
 	UI_MenuResetPing_f();
 }
 
+/*
+=================
+CMenuServerBrowser::LoadFriendsTab
+
+A7: the Friends tab of the original GameUI row. One entry per line of
+<gamedir>/friends/servers.txt, format "ip:port<TAB>server name" - the
+Steam friends screen picks the steam://connect link out of every friend's
+page and saves it there.
+
+Every line becomes a pending dummy server, the same placeholder path the
+Favorites/History tabs use for a not-yet-queried entry: Join game and View
+game info work right away, and the query issued afterwards fills in the
+real ping, map and player counts.
+
+Returns true when the file had actually changed since the last read: the
+previous bytes are the change oracle, so the periodic refresh in Draw()
+does not throw away the rows (and the user's selection) for nothing - and
+no second server_t list has to be kept around, which a CUtlVector copy
+would need (server_t has no default constructor).
+=================
+*/
+bool CMenuServerBrowser::LoadFriendsTab( void )
+{
+	const int tab = INTERNET_TAB_COUNT - 1; // Friends is the last tab
+
+	int len = 0;
+	byte *pfile = EngFuncs::COM_LoadFile( "friends/servers.txt", &len );
+	const char *raw = pfile ? (const char *)pfile : "";
+	const int rawLen = pfile ? len : 0; // data, never assumed NUL-terminated
+
+	const char *prev = m_sFriendsRaw.Get( );
+	const int prevLen = prev ? (int)m_sFriendsRaw.Length( ) : 0;
+
+	if( prevLen == rawLen && ( rawLen == 0 || !memcmp( raw, prev, rawLen )))
+	{
+		// nothing new since the last read - keep the list (and the rows
+		// built from it) exactly as they are
+		if( pfile )
+			EngFuncs::COM_FreeFile( pfile );
+		return false;
+	}
+
+	m_sFriendsRaw.Clear( );
+	m_sFriendsRaw.Append( raw, rawLen );
+	m_InternetServers[tab].RemoveAll( );
+
+	const char *p = raw;
+	const char *end = raw + rawLen;
+
+	while( p < end )
+	{
+		const char *eol = (const char *)memchr( p, '\n', end - p );
+		int ln = eol ? (int)( eol - p ) : (int)( end - p );
+
+		while( ln > 0 && ( p[ln - 1] == '\r' || p[ln - 1] == '\n' ))
+			ln--;
+
+		if( ln > 0 )
+		{
+			char line[512];
+			char addr[128];
+			char name[128];
+			char *sep;
+
+			if( ln >= (int)sizeof( line ))
+				ln = sizeof( line ) - 1;
+			memcpy( line, p, ln );
+			line[ln] = 0;
+
+			// "ip:port \t server name" - an address never contains a tab or
+			// a space, so the first separator ends it; the name may contain
+			// both (server names very often contain spaces)
+			sep = strchr( line, '\t' );
+			if( !sep )
+				sep = strchr( line, ' ' );
+
+			if( sep )
+			{
+				char *nm;
+
+				*sep = 0;
+				Q_strncpy( addr, line, sizeof( addr ));
+
+				nm = sep + 1;
+				while( *nm == '\t' || *nm == ' ' )
+					nm++;
+				Q_strncpy( name, nm, sizeof( name ));
+			}
+			else
+			{
+				// address only - the row falls back to showing the address
+				Q_strncpy( addr, line, sizeof( addr ));
+				name[0] = 0;
+			}
+
+			netadr_t adr;
+
+			if( addr[0] && EngFuncs::textfuncs.pNetAPI->StringToAdr( addr, &adr ))
+			{
+				bool found = false;
+
+				FOR_EACH_VEC( m_InternetServers[tab], j )
+				{
+					if( !EngFuncs::NET_CompareAdr( &m_InternetServers[tab][j].adr, &adr ))
+					{
+						found = true;
+						break;
+					}
+				}
+
+				if( !found )
+				{
+					CUtlString info;
+
+					info.AppendFormat( "\\host\\%s",
+						name[0] ? name : EngFuncs::NET_AdrToString( adr ));
+					info.AppendFormat( "\\gamedir\\%s", gMenu.m_gameinfo.gamefolder );
+					info.Append( "\\map\\unknown\\numcl\\0\\maxcl\\0\\p\\49" );
+
+					server_t serv( adr, info, false, true );
+					serv.UpdateData();
+					serv.SetPing( 9.999f ); // "no answer yet" placeholder
+
+					m_InternetServers[tab].AddToTail( serv );
+
+					// ask the entry for its real ping/map/player counts right
+					// away; the reply arrives through UI_AddServerToList and
+					// updates this tab's row in place (same path Favorites
+					// and History entries take)
+					EngFuncs::ClientCmdF( false, "ui_queryserver \"%s\" \"%s\"",
+						EngFuncs::NET_AdrToString( adr ), serv.ToProtocol( ));
+				}
+			}
+		}
+
+		if( !eol )
+			break;
+		p = eol + 1;
+	}
+
+	if( pfile )
+		EngFuncs::COM_FreeFile( pfile );
+
+	return true;
+}
+
+/*
+=================
+CMenuServerBrowser::UpdateFriendsHint
+
+A7: the Friends tab reads a file that only exists after a Steam sign-in
+through the Friends screen on the main menu, so an empty tab says that
+instead of showing a blank frame.
+=================
+*/
+void CMenuServerBrowser::UpdateFriendsHint( void )
+{
+	const bool friendsTab = ( tabSwitch.GetState( ) == INTERNET_TAB_COUNT - 1 );
+
+	if( friendsTab && gameListModel.GetRows( ) == 0 )
+		friendsHint.Show( );
+	else
+		friendsHint.Hide( );
+}
+
 void CMenuServerBrowser::RefreshList()
 {
 	gameListModel.serversRefreshTime = EngFuncs::DoubleTime();
+
+	if( tabSwitch.GetState() == INTERNET_TAB_COUNT - 1 )
+	{
+		// A7: Friends - re-read what the Steam friends screen saved. Same
+		// gate as every other tab here, so Draw()'s periodic refresh and the
+		// Refresh button act identically; the rows are only rebuilt when the
+		// file actually changed, which keeps the current selection alive
+		// across the automatic refreshes
+		if( uiStatic.realTime > refreshTime2 )
+		{
+			const int tab = INTERNET_TAB_COUNT - 1;
+			bool changed;
+
+			refreshTime2 = uiStatic.realTime + 1000;
+			refresh->SetGrayed( true );
+
+			changed = LoadFriendsTab( );
+
+			// the visible table can also go empty without the file changing:
+			// a filter's on-changed does ClearList() (flushes the model) and
+			// then lands here - the rows have to come back in that case too
+			if( !changed && m_InternetServers[tab].Count( ) > 0
+				&& gameListModel.GetRows( ) == 0 )
+				changed = true;
+
+			if( changed )
+			{
+				gameListModel.Flush();
+
+				FOR_EACH_VEC( m_InternetServers[tab], i )
+				{
+					gameListModel.AddServerToList( m_InternetServers[tab][i].adr,
+						m_InternetServers[tab][i].info, m_InternetServers[tab][i].favorite );
+				}
+
+				joinGame->SetGrayed( gameListModel.GetRows( ) == 0 );
+				viewGameInfo->SetGrayed( gameListModel.GetRows( ) == 0 );
+				if( gameListModel.GetRows( ))
+				{
+					MaybeEnableFavoriteButton();
+					OnChangeSelectedServer();
+				}
+			}
+		}
+
+		UpdateFriendsHint();
+		return;
+	}
 
 	if( m_bLanOnly )
 	{
@@ -956,9 +1205,9 @@ void CMenuServerBrowser::RefreshList()
 		if( m_iLastRefreshTab >= 0 && m_iLastRefreshTab < INTERNET_TAB_COUNT )
 			m_InternetServers[m_iLastRefreshTab].RemoveAll();
 
-		if( tabSwitch.GetState() == 2 )
+		if( tabSwitch.GetState() == 1 )
 			QueryServerList( favoritesList );
-		else if( tabSwitch.GetState() == 3 )
+		else if( tabSwitch.GetState() == 2 )
 			QueryServerList( historyList );
 		else
 		{
@@ -1011,28 +1260,35 @@ void CMenuServerBrowser::OnTabSwitch()
 {
 	int idx = tabSwitch.GetState();
 
-	switch( idx )
-	{
-	case 0: // Direct
-	case 1: // NAT
-		EngFuncs::CvarSetValue( "cl_nat", idx );
-		break;
-	default: // Favorites and History
-		EngFuncs::CvarSetValue( "cl_nat", 0.0f );
-		break;
-	}
+	// the original GameUI row has no NAT browser tab:
+	// Internet/Spectate query the master directly, Favorites/History go
+	// through their lists, LAN uses the local broadcast, Friends reads the
+	// list the Steam friends screen saved
+	EngFuncs::CvarSetValue( "cl_nat", 0.0f );
+	m_bLanOnly = ( idx == 4 ); // LAN tab
 
 	ClearList();
 	// populate visible model from per-tab buffer so user sees cached results instantly
 	int newTab = tabSwitch.GetState();
 	if( newTab < 0 || newTab >= INTERNET_TAB_COUNT )
-		newTab = 0;  // Safety: default to Direct tab if invalid
+		newTab = 0;  // Safety: default to Internet tab if invalid
+
+	// A7: the Friends tab has no cache worth keeping - the file the Steam
+	// friends screen wrote is the source of truth; LoadFriendsTab only
+	// touches the list when it really changed
+	if( newTab == INTERNET_TAB_COUNT - 1 )
+		LoadFriendsTab();
+
 	for( int i = 0; i < m_InternetServers[newTab].Count(); ++i )
 	{
 		// re-add entries via model to apply filters and update UI controls
 		gameListModel.AddServerToList( m_InternetServers[newTab][i].adr, m_InternetServers[newTab][i].info, m_InternetServers[newTab][i].favorite );
 	}
 	RefreshList();
+
+	// the empty-state caption belongs to the Friends tab only; RefreshList
+	// already placed it there and this keeps it in step for every other tab
+	UpdateFriendsHint();
 }
 
 void CMenuServerBrowser::OnChangeSelectedServer( void )
@@ -1093,9 +1349,9 @@ void CMenuServerBrowser::AddServer( void )
 	favoritesList.AddToTail( entry );
 
 	int previousTab = tabSwitch.GetState();
-	if( previousTab != 2 )
+	if( previousTab != 1 ) // Favorites tab
 	{
-		tabSwitch.SetState( 2 );
+		tabSwitch.SetState( 1 );
 	}
 
 	CUtlString fakeInfoString;
@@ -1104,8 +1360,8 @@ void CMenuServerBrowser::AddServer( void )
 	server_t serv( adr, fakeInfoString, false, true );
 	serv.UpdateData();
 	serv.SetPing( MAX_PING );
-	m_InternetServers[2].AddToTail( serv );
-	if( tabSwitch.GetState() == 2 )
+	m_InternetServers[1].AddToTail( serv );
+	if( tabSwitch.GetState() == 1 )
 	{
 		gameListModel.AddServerToList( adr, fakeInfoString, false );
 	}
@@ -1160,15 +1416,10 @@ void CMenuServerBrowser::_Init( void )
 	joinGame = AddButton( L( "Join game" ), nullptr, PC_JOIN_GAME, VoidCb( &CMenuServerBrowser::JoinGame ), QMF_GRAYED );
 	joinGame->onReleasedClActive = msgBox.MakeOpenEvent();
 
-	createGame = AddButton( L( "GameUI_GameMenu_CreateServer" ), NULL, PC_CREATE_GAME );
-	SET_EVENT_MULTI( createGame->onReleased,
-	{
-		if( ((CMenuServerBrowser*)pSelf->Parent())->m_bLanOnly )
-			EngFuncs::CvarSetValue( "public", 0.0f );
-		else EngFuncs::CvarSetValue( "public", 1.0f );
-
-		UI_CreateGame_Menu();
-	});
+	// A7 build 93: no "Create server" button - the reference Find Servers
+	// window doesn't have one (user request); RealignButtons flows the
+	// remaining buttons up so Favorite/Refresh/Add server/Done keep their
+	// clean left column
 
 	viewGameInfo = AddButton( L( "View game info" ), nullptr, PC_VIEW_GAME_INFO, VoidCb( &CMenuServerBrowser::ViewGameInfo ), QMF_GRAYED );
 	favorite = AddButton( L( "Favorite" ), nullptr, PC_FAVORITE, VoidCb( &CMenuServerBrowser::FavoriteServer ), 0, 'o' );
@@ -1198,20 +1449,18 @@ void CMenuServerBrowser::_Init( void )
 	gameList.SetSize( -20, 465 );
 
 	tabSwitch.SetRect( 360, 230, -20, 32 );
-	tabSwitch.AddSwitch( L( "Direct" ));
-	tabSwitch.AddSwitch( "NAT", true ); // intentionally not localized; hidden, NAT support deprecated
+	tabSwitch.AddSwitch( L( "Internet" ));
 	tabSwitch.AddSwitch( L( "Favorites" ));
 	tabSwitch.AddSwitch( L( "History" ));
+	tabSwitch.AddSwitch( L( "Spectate" ));
+	tabSwitch.AddSwitch( "LAN" ); // intentionally not localized, like in GameUI
+	tabSwitch.AddSwitch( L( "Friends" ));
 	tabSwitch.eTextAlignment = QM_CENTER;
 	tabSwitch.bMouseToggle = false;
 	tabSwitch.bKeepToggleWidth = true;
 	tabSwitch.iSelectColor = uiInputFgColor;
 	tabSwitch.iFgTextColor = uiInputFgColor - 0x00151515; // bit darker
 	tabSwitch.onChanged = VoidCb( &CMenuServerBrowser::OnTabSwitch );
-
-	// server.dll needs for reading savefiles or startup newgame
-	if( !EngFuncs::CheckGameDll( ))
-		createGame->SetGrayed( true );	// server.dll is missed - remote servers only
 
 	password.bHideInput = true;
 	password.bAllowColorstrings = false;
@@ -1367,6 +1616,16 @@ void CMenuServerBrowser::_Init( void )
 	AddItem( gameList );
 	AddItem( tabSwitch );
 
+	// A7: empty-state caption of the Friends tab - drawn after the table
+	// so it stays on top of the empty frame, hidden everywhere else
+	friendsHint.iFlags = QMF_INACTIVE;
+	friendsHint.colorBase = uiColorHelp;
+	friendsHint.szName = "No servers yet - sign in through Friends on the main menu";
+	friendsHint.eTextAlignment = QM_CENTER;
+	friendsHint.SetRect( 420, 400, 560, 32 );
+	friendsHint.Hide();
+	AddItem( friendsHint );
+
 	AddItem( filterPing );
 	AddItem( filterEmpty );
 	AddItem( filterFull );
@@ -1486,6 +1745,9 @@ void CMenuServerBrowser::Show()
 		}
 	}
 	m_iLastRefreshTab = -1;
+
+	// visible tab may be Friends (cached from a previous visit)
+	UpdateFriendsHint();
 }
 
 void CMenuServerBrowser::SaveLists()
@@ -1586,8 +1848,8 @@ void CMenuServerBrowser::AddServerToList( netadr_t adr, const char *info )
 	{
 		switch( curTabVisible )
 		{
-		case 2:
-		case 3:
+		case 1: // Favorites
+		case 2: // History
 			targetTab = curTabVisible;
 			break;
 		default:
@@ -1599,7 +1861,7 @@ void CMenuServerBrowser::AddServerToList( netadr_t adr, const char *info )
 		}
 	}
 
-	if( targetTab == 2 ) // Favorites
+	if( targetTab == 1 ) // Favorites (tab order: Internet/Favorites/History/Spectate/LAN/Friends)
 	{
 		bool found = false;
 		FOR_EACH_VEC( favoritesList, j )
@@ -1613,7 +1875,7 @@ void CMenuServerBrowser::AddServerToList( netadr_t adr, const char *info )
 		if( !found )
 			return;
 	}
-	else if( targetTab == 3 ) // History
+	else if( targetTab == 2 ) // History
 	{
 		bool found = false;
 		FOR_EACH_VEC( historyList, j )

@@ -483,6 +483,16 @@ void CMenuItemsHolder::CalcItemsSizes()
 		m_pItems[i]->CalcSizes();
 }
 
+// A7 floating dialogs: see CMenuBaseItem::RecalcRenderTree - recalculate
+// this holder first, then walk children so they compose the fresh offset.
+void CMenuItemsHolder::RecalcRenderTree( void )
+{
+	CMenuBaseItem::RecalcRenderTree();
+
+	FOR_EACH_VEC( m_pItems, i )
+		m_pItems[i]->RecalcRenderTree();
+}
+
 void CMenuItemsHolder::SetCursor( int newCursor, bool notify )
 {
 	if( newCursor < 0 || newCursor >= m_pItems.Count() )

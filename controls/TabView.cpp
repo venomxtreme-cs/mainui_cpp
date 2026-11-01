@@ -37,21 +37,32 @@ void CMenuTabView::VidInit()
 
 	_VidInit();
 	VidInitItems();
+}
 
-	m_szTab.w = m_scSize.w / m_pItems.Count();
+// A7 build 60: tab metrics must track the CURRENT strip size. VidInit-only
+// computation left m_szTab stale after the float layout pass (negative-
+// width strips resolve late) and after any size change - misaligned strips
+// and wrong-tab hit tests ("disorganized"). RecalcRenderTree calls this too.
+void CMenuTabView::CalcSizes( void )
+{
+	BaseClass::CalcSizes();
+
+	m_szTab.w = m_pItems.Count() ? ( m_scSize.w / m_pItems.Count() ) : 0;
 	m_szTab.h = m_scChSize * 1.5f;
 }
 
 void CMenuTabView::DrawTab(Point pt, const char *name, bool isEnd, bool isSelected, bool isHighlighted)
 {
-	uint textColor = uiInputTextColor;
-	uint fillColor = uiColorBlack;
+	// A7 build 87: GameUI tabs - both states sit on the panel colour; the
+	// active tab is marked with accent text only, inactive tabs keep a
+	// light bottom edge and divider like the reference strip
+	uint textColor = uiColorText;
+	uint fillColor = uiColorBg;
 	uint textflags = ( iFlags & QMF_DROPSHADOW ) ? ETF_SHADOW : 0;
 
-	if( isSelected && !isHighlighted )
+	if( isSelected )
 	{
-		fillColor = uiInputBgColor;
-		textColor = uiInputFgColor;
+		textColor = uiColorAccent;
 	}
 	else if( isHighlighted )
 	{
@@ -61,6 +72,12 @@ void CMenuTabView::DrawTab(Point pt, const char *name, bool isEnd, bool isSelect
 	UI_FillRect( pt, m_szTab, fillColor );
 	UI_DrawString( font, pt, m_szTab, name, textColor, m_scChSize, eTextAlignment, textflags );
 
+	// inactive tabs keep a light bottom edge (selected one merges with the panel)
+	if( !isSelected )
+	{
+		UI_FillRect( pt.x, pt.y + m_szTab.h, m_szTab.w, UI_OUTLINE_WIDTH, uiColorBorderLight );
+	}
+
 	if( !isEnd )
 	{
 		int x = pt.x + m_szTab.w;
@@ -68,15 +85,21 @@ void CMenuTabView::DrawTab(Point pt, const char *name, bool isEnd, bool isSelect
 		int w = UI_OUTLINE_WIDTH;
 		int h = m_szTab.h + UI_OUTLINE_WIDTH + UI_OUTLINE_WIDTH;
 
-		// draw right
-		UI_FillRect( x, y, w, h, uiColorHelp );
+		// draw right divider
+		UI_FillRect( x, y, w, h, uiColorBorderLight );
 	}
 }
 
 void CMenuTabView::Draw()
 {
-	// draw frame first
-	UI_DrawRectangle( m_scPos, m_scSize, uiColorHelp );
+	Point contentOffset = Point( m_scPos.x, m_scPos.y + m_scChSize * 1.5f );
+	Size contentSize = Size( m_scSize.w, m_scSize.h - m_scChSize * 1.5f );
+
+	// fill panel background first so tab edges draw over it
+	UI_FillRect( contentOffset, contentSize, uiColorBg );
+
+	// draw frame (raised bevel)
+	UI_DrawBevel( m_scPos, m_scSize, false );
 
 	// draw tabs
 	Point tabOffset = m_scPos;
@@ -90,21 +113,84 @@ void CMenuTabView::Draw()
 		tabOffset.x += m_szTab.w;
 	}
 
-	Point contentOffset = Point( m_scPos.x, m_scPos.y + m_scChSize * 1.5f );
-	Size contentSize = Size( m_scSize.w, m_scSize.h - m_scChSize * 1.5f );
-
-	// draw line after tab
-	UI_FillRect( contentOffset.x, contentOffset.y,
-		m_scSize.w, UI_OUTLINE_WIDTH, uiColorHelp );
-
-	// fill background
-	UI_FillRect( contentOffset, contentSize, uiColorBlack );
-
 	// draw contents
 	if( m_iCursor >= 0 && m_iCursor < m_pItems.Count() )
 	{
 		UI::Scissor::PushScissor( contentOffset, contentSize );
 			m_pItems[m_iCursor]->Draw();
 		UI::Scissor::PopScissor();
+	}
+}
+
+// A7 remake: tab strip input. Hovering (or tapping - the touch press is
+// preceded by a move) the strip selects the tab; the content area is
+// forwarded to the current page only, since every page shares one rect.
+bool CMenuTabView::MouseMove( int x, int y )
+{
+	if( m_szTab.w > 0 && !m_pItems.IsEmpty() &&
+		UI_CursorInRect( m_scPos, Size( m_scSize.w, m_szTab.h )))
+	{
+		int idx = ( x - m_scPos.x ) / m_szTab.w;
+		if( m_pItems.IsValidIndex( idx ) && idx != m_iCursor )
+		{
+			SetCursor( idx );
+			PlayLocalSound( uiStatic.sounds[SND_MOVE] );
+		}
+		return true;
+	}
+
+	CMenuBaseItem *cur = ItemAtCursor();
+	if( cur )
+		return cur->MouseMove( x, y );
+
+	return false;
+}
+
+bool CMenuTabView::KeyDown( int key )
+{
+	if( UI::Key::IsLeftMouse( key ) && m_szTab.w > 0 && !m_pItems.IsEmpty() &&
+		UI_CursorInRect( m_scPos, Size( m_scSize.w, m_szTab.h )))
+	{
+		int idx = ( uiStatic.cursorX - m_scPos.x ) / m_szTab.w;
+		if( m_pItems.IsValidIndex( idx ))
+			SetCursor( idx );
+		return true;
+	}
+
+	// A7 remake: every page shares one content rect, so the base
+	// ItemsHolder fallback (which sends mouse keys to ALL non-focused
+	// items) leaked each click to every sibling page - a click anywhere
+	// in Options could press the Touch page's button behind the visible
+	// page and open the touch menu. Wheel and all other keys go to the
+	// current page only.
+	CMenuBaseItem *cur = ItemAtCursor();
+	return cur ? cur->KeyDown( key ) : false;
+}
+
+bool CMenuTabView::KeyUp( int key )
+{
+	// see KeyDown - sibling pages must never see the release either
+	CMenuBaseItem *cur = ItemAtCursor();
+	return cur ? cur->KeyUp( key ) : false;
+}
+
+// A7 build 91: F2/F3 switch tab pages from anywhere in the dialog
+// (arrow keys keep their normal item-navigation meaning)
+void CMenuTabView::SwitchPage( int delta )
+{
+	int count = m_pItems.Count();
+
+	if( count <= 0 )
+		return;
+
+	int idx = ( m_iCursor + delta ) % count;
+
+	if( idx < 0 )
+		idx += count;
+
+	if( idx != m_iCursor )
+	{
+		SetCursor( idx );
+		PlayLocalSound( uiStatic.sounds[SND_MOVE] );
 	}
 }

@@ -455,15 +455,15 @@ void CMenuField::Draw( void )
 	}
 	else
 	{
-		// draw the background
+		// A7 retheme: secondary background + sunken bevel (classic input field)
 		UI_FillRect( newPos, m_scSize, uiInputBgColor );
 
 		// draw the rectangle
-		UI_DrawRectangle( newPos, m_scSize, uiInputFgColor );
+		UI_DrawBevel( newPos, m_scSize, true );
 	}
 
 	textHeight = y - (m_scChSize * 1.5f);
-	UI_DrawString( font, m_scPos.x, textHeight, m_scSize.w, m_scChSize, szName, uiColorHelp, m_scChSize, QM_LEFT, textflags | ETF_FORCECOL );
+	UI_DrawString( font, m_scPos.x, textHeight, m_scSize.w, m_scChSize, szName, uiColorText, m_scChSize, QM_LEFT, textflags | ETF_FORCECOL );
 
 	if( iFlags & QMF_GRAYED )
 	{

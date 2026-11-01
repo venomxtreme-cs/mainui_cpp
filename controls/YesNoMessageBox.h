@@ -25,6 +25,12 @@ class CMenuYesNoMessageBox : public CMenuBaseWindow
 {
 public:
 	typedef CMenuBaseWindow BaseClass;
+
+	// A7 build 60: the Yes/No box IS a dialog - its OK/Cancel PicButtons
+	// get the same button chrome as every other dialog (only applies when
+	// button art is missing, so behavior is otherwise unchanged)
+	bool IsFloatDialog() const override { return true; }
+
 	CMenuYesNoMessageBox( bool alert = false );
 
 	void _Init() override;

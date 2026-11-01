@@ -45,13 +45,38 @@ CMenuCheckBox::Init
 */
 void CMenuCheckBox::VidInit( void )
 {
-	colorText.SetDefault( uiColorHelp );
+	colorText.SetDefault( uiColorText ); // A7 build 87: GameUI label colour
 	BaseClass::VidInit();
+}
+
+// A7 float-dialog fix: the label position is derived from the render
+// position, so it must be refreshed inside CalcSizes - which both VidInit
+// and RecalcRenderTree call. Computed at VidInit only, the label stayed at
+// its pre-shift place when the dialog was moved ("text still in other
+// place").
+void CMenuCheckBox::CalcSizes( void )
+{
+	BaseClass::CalcSizes();
+
 	m_scTextPos.x = m_scPos.x + ( m_scSize.w * 1.25f );
 	m_scTextPos.y = m_scPos.y;
 
 	m_scTextSize.w = g_FontMgr->GetTextWideScaled( font, szName, m_scChSize );
 	m_scTextSize.h = m_scChSize;
+}
+
+// A7 build 62: the label is drawn at 1.25x the box width, OUTSIDE the
+// declared rect - the float frame must wrap it (Gamepad "Invert" and any
+// other checkbox near the right edge). m_scTextSize is the exact label
+// width in screen px; the frame works in layout coords.
+int CMenuCheckBox::GetVisualWidth( void ) const
+{
+	int w = (int)( size.w * 1.25f );
+
+	if( uiStatic.scaleX > 0.01f )
+		w += (int)( m_scTextSize.w / uiStatic.scaleX );
+
+	return w;
 }
 
 bool CMenuCheckBox::KeyUp( int key )
@@ -132,45 +157,49 @@ void CMenuCheckBox::Draw( void )
 		EngFuncs::DrawConsoleString( coord, szStatusText );
 	}
 
+	// A7 retheme: draw the checkbox box directly (referenced gfx/shell/cb_* art
+	// is not in the game data). cs16.css style: sunken box, accent check mark.
+	bool bGrayed = ( iFlags & QMF_GRAYED ) != 0;
+	bool bFocus = true;
+	bool bPressed = m_bPressed;
+
 	if( iFlags & QMF_GRAYED )
+		bFocus = false;
+	else if ((( iFlags & QMF_MOUSEONLY ) && !( iFlags & QMF_HASMOUSEFOCUS ))
+		|| ( this != m_pParent->ItemAtCursor() ))
+		bFocus = false;
+
+	unsigned int light = uiColorBorderLight;
+	unsigned int dark  = uiColorBorderDark;
+
+	// fill
+	UI_FillRect( m_scPos, m_scSize, bGrayed ? uiColorBlack : uiInputBgColor );
+
+	if( bFocus )
+		light = bPressed ? dark : uiColorAccent; // highlight edge when focused
+
+	if( bPressed )
 	{
-		UI_DrawPic( m_scPos, m_scSize, uiColorWhite, szGrayedPic );
-		return; // grayed
+		dark = uiColorBorderDark;
 	}
 
-	if((( iFlags & QMF_MOUSEONLY ) && !( iFlags & QMF_HASMOUSEFOCUS ))
-	   || ( this != m_pParent->ItemAtCursor() ) )
-	{
-		if( !bChecked )
-			UI_DrawPic( m_scPos, m_scSize, colorBase, szEmptyPic );
-		else UI_DrawPic( m_scPos, m_scSize, colorBase, szCheckPic );
-		return; // no focus
-	}
+	UI_DrawRectangleExt( m_scPos, m_scSize, light, 0, QM_TOP | QM_LEFT );
+	UI_DrawRectangleExt( m_scPos, m_scSize, dark,  0, QM_BOTTOM | QM_RIGHT );
 
-	if( m_bPressed )
+	if( bChecked )
 	{
-		UI_DrawPic( m_scPos, m_scSize, colorBase, szPressPic );
-	}
-	else if( eFocusAnimation == QM_HIGHLIGHTIFFOCUS )
-	{
-		if( bChecked )
-		{
-			// use two textures for it. Second is just focus texture, slightly orange. Looks pretty.
-			UI_DrawPic( m_scPos, m_scSize, colorBase, szPressPic );
-			UI_DrawPic( m_scPos, m_scSize, uiInputTextColor, szFocusPic, QM_DRAWADDITIVE );
-		}
-		else
-		{
-			UI_DrawPic( m_scPos, m_scSize, colorFocus, szFocusPic );
-		}
-	}
-	else if( bChecked )
-	{
-		UI_DrawPic( m_scPos, m_scSize, colorBase, szCheckPic );
-	}
-	else
-	{
-		UI_DrawPic( m_scPos, m_scSize, colorBase, szEmptyPic );
+		// staircase check mark on an 8x8 unit grid
+		int u = m_scSize.w / 8;
+		if( u < 1 ) u = 1;
+
+		static const int cells[][2] = {
+			{1,4},{2,5},{3,6},{4,5},{5,4},{6,3},{7,2}
+		};
+
+		unsigned int checkColor = bGrayed ? uiColorDkGrey : uiColorAccent;
+
+		for( int i = 0; i < 7; i++ )
+			UI_FillRect( m_scPos.x + cells[i][0] * u, m_scPos.y + cells[i][1] * u, u, u, checkColor );
 	}
 }
 

@@ -41,7 +41,10 @@ int CALLBACK FontEnumProc( const LOGFONTA *, const TEXTMETRICA *, DWORD, LPARAM 
 bool CWinAPIFont::Create( const char *name, int tall, int weight, int blur, float brighten, int outlineSize, int scanlineOffset, float scanlineScale, int flags )
 {
 	Q_strncpy( m_szName, name, sizeof( m_szName )  );
-
+	// build 90: +6 px is only GDI line-box headroom (leading/descender space,
+	// equal to tm.tmHeight below) - the true device identity the builder asked
+	// for is stamped afterwards as m_iRequestTall, so font dedup and draw-scale
+	// ratios don't see a height nobody ever laid a label out with
 	m_iTall = tall + 6;
 	m_iWeight = weight;
 	m_iFlags = flags;

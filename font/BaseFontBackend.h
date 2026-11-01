@@ -74,6 +74,11 @@ public:
 
 	inline int GetHeight() const       { return m_iHeight + GetEfxOffset(); }
 	inline int GetTall() const         { return m_iTall; }
+	// build 90: height CFontBuilder requested, in DEVICE pixels (the very same
+	// value the control lays its label line out with). Backends may pad
+	// m_iTall for their own line box (WinAPI adds leading headroom), so font
+	// cache dedup and draw-scale ratios must use this instead of m_iTall.
+	inline int GetRequestTall() const  { return m_iRequestTall; }
 	inline const char *GetName() const { return m_szName; }
 	inline int GetAscent() const       { return m_iAscent; }
 	inline int GetMaxCharWidth() const { return m_iMaxCharWidth; }
@@ -97,6 +102,8 @@ protected:
 
 	char m_szName[32];
 	int	 m_iTall, m_iWeight, m_iFlags, m_iHeight, m_iMaxCharWidth;
+	// build 90: un-padded device height the builder asked for (see GetRequestTall)
+	int  m_iRequestTall;
 	int  m_iAscent;
 	bool m_bAdditive;
 
@@ -148,6 +155,9 @@ private:
 
 	char m_szTextureName[256];
 	friend class CFontManager;
+	// build 90: CFontBuilder::Create stamps m_iRequestTall after the backend
+	// finished (WinAPI pads m_iTall itself, so the builder owns the identity)
+	friend class CFontBuilder;
 };
 
 

@@ -118,6 +118,26 @@ bool CMenuSpinControl::KeyUp( int key )
 CMenuSpinControl::Draw
 =================
 */
+/*
+=================
+SpinDrawArrow
+
+A7 retheme: drawn left/right arrow button for spin controls.
+The referenced gfx/shell/larrow* art is not in the game data.
+=================
+*/
+static void SpinDrawArrow( HFont font, Point pos, Size size, bool bLeft, unsigned int color, bool bFocus, int charH )
+{
+	UI_FillRect( pos, size, uiInputBgColor );
+
+	unsigned int light = bFocus ? uiColorAccent : uiColorBorderLight;
+
+	UI_DrawRectangleExt( pos, size, light, 0, QM_TOP | QM_LEFT );
+	UI_DrawRectangleExt( pos, size, uiColorBorderDark, 0, QM_BOTTOM | QM_RIGHT );
+
+	UI_DrawString( font, pos, size, bLeft ? "<" : ">", color, charH, QM_CENTER, ETF_FORCECOL | ETF_NOSIZELIMIT | ETF_SHADOW );
+}
+
 void CMenuSpinControl::Draw( void )
 {
 	int	leftFocus, rightFocus;
@@ -142,7 +162,7 @@ void CMenuSpinControl::Draw( void )
 	}
 
 	int textHeight = m_scPos.y - (m_scChSize * 1.5f);
-	UI_DrawString( font, m_scPos.x - UI_OUTLINE_WIDTH, textHeight, m_scSize.w + UI_OUTLINE_WIDTH * 2, m_scChSize, szName, uiColorHelp, m_scChSize, QM_LEFT, textflags | ETF_FORCECOL | ETF_NOSIZELIMIT );
+	UI_DrawString( font, m_scPos.x - UI_OUTLINE_WIDTH, textHeight, m_scSize.w + UI_OUTLINE_WIDTH * 2, m_scChSize, szName, uiColorText, m_scChSize, QM_LEFT, textflags | ETF_FORCECOL | ETF_NOSIZELIMIT );
 
 	// calculate size and position for the arrows
 	arrow.w = m_scSize.h + UI_OUTLINE_WIDTH * 2;
@@ -166,11 +186,12 @@ void CMenuSpinControl::Draw( void )
 	}
 	else
 	{
-		// draw the background
-		UI_FillRect( scCenterPos, scCenterBox, uiColorBlack );
+		// A7 build 87: panel-coloured centre like the GameUI dropdowns
+		// (the reference combo fields are the same olive as the dialog)
+		UI_FillRect( scCenterPos, scCenterBox, uiColorBg );
 
 		// draw the rectangle
-		UI_DrawRectangle( scCenterPos, scCenterBox, uiInputFgColor );
+		UI_DrawBevel( scCenterPos, scCenterBox, true );
 	}
 
 	if( iFlags & QMF_GRAYED )
@@ -178,8 +199,8 @@ void CMenuSpinControl::Draw( void )
 		UI::Scissor::PushScissor( scCenterPos, scCenterBox );
 		UI_DrawString( font, scCenterPos, scCenterBox, m_szDisplay, uiColorDkGrey, m_scChSize, eTextAlignment, textflags | ETF_FORCECOL );
 		UI::Scissor::PopScissor();
-		UI_DrawPic( left, arrow, uiColorDkGrey, m_szLeftArrow );
-		UI_DrawPic( right, arrow, uiColorDkGrey, m_szRightArrow );
+		SpinDrawArrow( font, left, arrow, true,  uiColorDkGrey, false, m_scChSize );
+		SpinDrawArrow( font, right, arrow, false, uiColorDkGrey, false, m_scChSize );
 		return; // grayed
 	}
 
@@ -188,8 +209,8 @@ void CMenuSpinControl::Draw( void )
 		UI::Scissor::PushScissor( scCenterPos, scCenterBox );
 		UI_DrawString( font, scCenterPos, scCenterBox, m_szDisplay, colorBase, m_scChSize, eTextAlignment, textflags );
 		UI::Scissor::PopScissor();
-		UI_DrawPic(left, arrow, colorBase, m_szLeftArrow);
-		UI_DrawPic(right, arrow, colorBase, m_szRightArrow);
+		SpinDrawArrow( font, left, arrow, true,  colorBase, false, m_scChSize );
+		SpinDrawArrow( font, right, arrow, false, colorBase, false, m_scChSize );
 		return;		// No focus
 	}
 
@@ -202,8 +223,8 @@ void CMenuSpinControl::Draw( void )
 		UI::Scissor::PushScissor( scCenterPos, scCenterBox );
 		UI_DrawString( font, scCenterPos, scCenterBox, m_szDisplay, colorFocus, m_scChSize, eTextAlignment, textflags );
 		UI::Scissor::PopScissor();
-		UI_DrawPic( left, arrow, colorBase, (leftFocus) ? m_szLeftArrowFocus : m_szLeftArrow );
-		UI_DrawPic( right, arrow, colorBase, (rightFocus) ? m_szRightArrowFocus : m_szRightArrow );
+		SpinDrawArrow( font, left, arrow, true,  leftFocus  ? uiColorAccent : (unsigned int)colorBase, leftFocus,  m_scChSize );
+		SpinDrawArrow( font, right, arrow, false, rightFocus ? uiColorAccent : (unsigned int)colorBase, rightFocus, m_scChSize );
 	}
 	else if( eFocusAnimation == QM_PULSEIFFOCUS )
 	{
@@ -214,8 +235,8 @@ void CMenuSpinControl::Draw( void )
 		UI::Scissor::PushScissor( scCenterPos, scCenterBox );
 		UI_DrawString( font, scCenterPos, scCenterBox, m_szDisplay, color, m_scChSize, eTextAlignment, textflags );
 		UI::Scissor::PopScissor();
-		UI_DrawPic( left, arrow, (leftFocus) ? color : (int)colorBase, (leftFocus) ? m_szLeftArrowFocus : m_szLeftArrow );
-		UI_DrawPic( right, arrow, (rightFocus) ? color : (int)colorBase, (rightFocus) ? m_szRightArrowFocus : m_szRightArrow );
+		SpinDrawArrow( font, left, arrow, true,  color, leftFocus,  m_scChSize );
+		SpinDrawArrow( font, right, arrow, false, color, rightFocus, m_scChSize );
 	}
 }
 

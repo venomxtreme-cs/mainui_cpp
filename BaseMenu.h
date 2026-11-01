@@ -155,6 +155,21 @@ extern unsigned int	uiColorWhite;
 extern unsigned int	uiColorDkGrey;
 extern unsigned int	uiColorBlack;
 
+// A7 retheme: cs16.css / original CS 1.6 palette tokens
+extern unsigned int	uiColorBg;			// #4c5844 panel background (A7 build 87: sampled from GameUI)
+extern unsigned int	uiColorSecondaryBg;	// #3e4637 input/list background
+extern unsigned int	uiColorAccent;		// #c4b550 gold accent (focus, checked, progress)
+extern unsigned int	uiColorBorderLight;	// #889180 raised top/left, sunken bottom/right
+extern unsigned int	uiColorBorderDark;	// #282e22 raised bottom/right, sunken top/left
+extern unsigned int	uiColorText;		// #d8ded3 control labels above fields/sliders (GameUI text-2)
+
+// A7 build 87: runtime sound-set switch. The main menu keeps the 2003
+// GameUI sounds; every other window (Options, dialogs, buy menu) uses the
+// original GoldSource launch_* set. UI_UpdateSoundSet picks the set for
+// whatever window is now topmost; window Show/Hide call it.
+void UI_SetSoundSet( bool goldSource );
+void UI_UpdateSoundSet( void );
+
 // TODO: Move it under namespace?
 
 void UI_ScaleCoords( int *x, int *y, int *w, int *h );
@@ -221,6 +236,17 @@ inline void UI_DrawRectangleExt( Point pos, Size size, const unsigned int color,
 	UI_DrawRectangleExt( pos.x, pos.y, size.w, size.h, color, outlineWidth, flag );
 }
 
+// A7: classic bevel border. raised = light top/left + dark bottom/right;
+// sunken = dark top/left + light bottom/right (classic Win95/VGUI field look)
+void UI_DrawBevel( int x, int y, int w, int h, bool bSunken, int outlineWidth = 0 );
+inline void UI_DrawBevel( Point pos, Size size, bool bSunken, int outlineWidth = 0 )
+{
+	UI_DrawBevel( pos.x, pos.y, size.w, size.h, bSunken, outlineWidth );
+}
+
+// A7: drawn up/down triangle (fallback for missing gfx/shell arrow art)
+void UI_DrawTriangle( Point pos, Size size, bool bUp, unsigned int color );
+
 void UI_StartSound( const char *sound );
 
 int UI_CreditsActive( void );
@@ -283,6 +309,7 @@ void UI_SaveLoad_Menu( void );
 void UI_MultiPlayer_Menu( void );
 void UI_Options_Menu( void );
 void UI_InternetGames_Menu( void );
+void UI_RandomServer( void );
 void UI_LanGame_Menu( void );
 void UI_ServerBrowser_Menu( void );
 void UI_PlayerSetup_Menu( void );
@@ -307,6 +334,9 @@ void UI_GamePad_Menu( void );
 void UI_GamePadGyro_Menu( void );
 void UI_Zoo_Menu( void );
 void UI_ServerInfo_Menu( netadr_t adr, const char *hostname );
+
+// in-game "Current players" (player list) dialog
+void UI_PlayerList_Menu( void );
 
 bool UI_AdvUserOptions_IsAvailable( void );
 void UI_AdvUserOptions_Menu( void );

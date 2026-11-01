@@ -37,9 +37,10 @@ CMenuDropDown::CMenuDropDown() : BaseClass()
 
 void CMenuDropDown::VidInit()
 {
-	iBackgroundColor.SetDefault( uiColorBlack );
-	iFgTextColor.SetDefault( uiInputFgColor );
+	iBackgroundColor.SetDefault( uiColorSecondaryBg ); // A7: cs16 secondary bg
+	iFgTextColor.SetDefault( uiInputFgColor );         // dark text on accent (open state)
 	iBgTextColor.SetDefault( uiPromptTextColor );
+	colorFocus.SetDefault( uiColorBg ); // A7: hover = slightly lighter panel color
 
 	BaseClass::VidInit();
 
@@ -56,6 +57,14 @@ void CMenuDropDown::VidInit()
 		m_ArrowOpened.Load(UI_DOWNARROWFOCUS);
 	}
 	m_ArrowSize = EngFuncs::PIC_Size( m_ArrowClosed );
+
+	// A7: arrow art (gfx/shell/*arrow*) is not in the game data,
+	// fall back to a drawn triangle sized to the field
+	if( m_ArrowSize.w < 1 || m_ArrowSize.h < 1 )
+	{
+		m_ArrowSize.w = m_scItemSize.h / 2;
+		m_ArrowSize.h = m_scItemSize.h / 2;
+	}
 }
 
 int CMenuDropDown::IsNewStateByMouseClick()
@@ -155,7 +164,6 @@ void CMenuDropDown::SetMenuOpen( bool isOpen )
 void CMenuDropDown::Draw()
 {
 	uint textflags = ETF_NO_WRAP;
-	uint borderColor = uiInputFgColor;
 
 	if( iFlags & QMF_DROPSHADOW )
 		textflags |= ETF_SHADOW;
@@ -168,7 +176,7 @@ void CMenuDropDown::Draw()
 			pt.y += m_scItemSize.h;
 
 		// all other items
-		UI_FillRect( pt.x, pt.y, m_scItemSize.w, m_scSize.h - m_scItemSize.h, 0xff000000 );
+		UI_FillRect( pt.x, pt.y, m_scItemSize.w, m_scSize.h - m_scItemSize.h, uiColorSecondaryBg );
 		for( int i = 0; i < m_szNames.Count(); i++ )
 		{
 			uint textColor = iBgTextColor;
@@ -193,8 +201,9 @@ void CMenuDropDown::Draw()
 	uint selectedBgColor = iBackgroundColor;
 	if( m_isOpen )
 	{
+		// A7: open state = accent fill with dark text (cs16.css active select)
 		selectedTextColor = iFgTextColor;
-		selectedBgColor = borderColor;
+		selectedBgColor = uiColorAccent;
 	}
 	if( bDropUp )
 	{
@@ -204,15 +213,18 @@ void CMenuDropDown::Draw()
 	UI_DrawString( font, selectedPos, selectedSize, m_szNames[m_iState], selectedTextColor, m_scChSize, eTextAlignment, textflags );
 
 	// border
-	UI_DrawRectangle( m_scPos, m_scSize, borderColor );
+	UI_DrawBevel( m_scPos, m_scSize, true );
 
 	// arrow background
 	uint arrowX = selectedPos.x + selectedSize.w;
-	UI_FillRect( arrowX, selectedPos.y, m_ArrowSize.w, selectedSize.h, uiInputFgColor );
-	// arrow
-	CImage &arrow = m_isOpen ? m_ArrowOpened : m_ArrowClosed;
-	Point arrowPoint( arrowX, selectedPos.y + (selectedSize.h - m_ArrowSize.h)/2 );
-	UI_DrawPic( arrowPoint, m_ArrowSize, -1, arrow );
+	UI_FillRect( arrowX, selectedPos.y, m_ArrowSize.w, selectedSize.h,
+		m_isOpen ? uiColorAccent : uiInputBgColor );
+
+	// arrow (drawn triangle; referenced art is missing from the data)
+	UI_DrawTriangle(
+		Point( arrowX, selectedPos.y + (selectedSize.h - m_ArrowSize.h) / 2 ),
+		m_ArrowSize, bDropUp ? m_isOpen : !m_isOpen,
+		m_isOpen ? uiInputFgColor : uiColorHelp );
 }
 
 void CMenuDropDownStr::UpdateEditable()

@@ -55,6 +55,16 @@ public:
 	// Check current window is a root
 	virtual bool IsRoot() const { return false; }
 
+	// A7 build 87: only the main menu root keeps the 2003 GameUI sound
+	// set - every other window uses the original GoldSource sounds
+	// (UI_UpdateSoundSet uses this to pick the active set)
+	virtual bool IsMainMenuRoot() const { return false; }
+
+	// A7 floating dialogs: only CMenuFramework overrides this (GoldSource-
+	// style framed window); controls use it to pick their styling (dialog
+	// buttons draw with chrome, the main menu keeps its flat text list)
+	virtual bool IsFloatDialog() const { return false; }
+
 	// Hide current window and save changes
 	virtual void SaveAndPopMenu();
 

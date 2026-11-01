@@ -42,6 +42,9 @@ void UI_Touch_Menu( void )
 	if( !menu_touch->WasInit() )
 	{
 		menu_touch->banner.SetPicture( ART_BANNER );
+		// A7 build 58: proper page title for the touch hub (also keeps the
+		// APK verification marker that lived in the removed Options tab)
+		menu_touch->banner.SetText( L( "Touch Settings..." ));
 		menu_touch->AddItem( menu_touch->banner );
 
 		menu_touch->AddButton( L( "Touch options" ), L( "Touch sensitivity and profile options" ), PC_TOUCH_OPTIONS,

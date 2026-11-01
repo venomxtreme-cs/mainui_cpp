@@ -30,6 +30,7 @@ GNU General Public License for more details.
 #endif
 
 #include "StbFont.h"
+#include "tahoma_embedded.h" // A7 build 104: bundled face fallback
 
 #ifdef __GNUC__
 #pragma GCC diagnostic pop
@@ -75,8 +76,18 @@ bool CStbFont::Create( const char *name, int tall, int weight, int blur, float b
 
 	if( !m_pFontData )
 	{
-		Con_Printf( "Unable to read font file %s!\n", font_face_path );
-		return false;
+		// A7 build 104 (user: "Why fonts cmd menu look like that" - wants
+		// the crisp Tahoma like the HUD): when this read misses, Create()
+		// used to fail and the whole menu silently dropped to
+		// CBitmapFont + the #XASH_SYSTEMFONT_001 sheet - fixed
+		// half-height cells with a gap between every letter and labels
+		// wrapped mid-word ("Game Setting|s"). The same face the HUD
+		// loads is bundled into the menu, so the STB backend always
+		// initializes and never falls back. (m_pFontData is never freed
+		// by this class - file-backed data is owned by the FontManager
+		// cache, the embedded copy is static.)
+		Con_Printf( "[A7] menu font: %s unreadable, using bundled copy\n", font_face_path );
+		m_pFontData = (byte *)menu_tahoma_ttf;
 	}
 
 	if( !stbtt_InitFont( &m_fontInfo, m_pFontData, 0 ) )

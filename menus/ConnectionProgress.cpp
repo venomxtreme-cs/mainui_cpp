@@ -117,10 +117,32 @@ public:
 		commonProgress.SetValue( 0 );
 	}
 
+	// A7 build 96: guaranteed visible + ACTIVE dialog on every load-phase
+	// call. IsVisible() alone is not enough: CWindowStack::Remove leaves a
+	// removed-as-last-window instance sitting in the vector flagged
+	// QMF_CLOSING with no Update() ever purging it (IsActive() is false),
+	// so the old IsVisible() ? VidInit() pattern kept re-laying-out a
+	// window that CWindowStack::Update never draws - the screen stayed
+	// black for the whole first phase. Show() -> Add() clears QMF_CLOSING
+	// and re-selects it as active (Init() inside is idempotent).
+	void EnsureShown( void )
+	{
+		if( IsVisible( ) && m_pStack->Current( ) == this && !FBitSet( iFlags, QMF_CLOSING ))
+			VidInit( ); // already on top: re-layout only (192 -> 256 box)
+		else Show( );   // stale/closing/not-top: (re)activate strictly
+	}
+
 	EState m_iState;
 	ESource m_iSource;
 private:
 	CMenuBackgroundBitmap background;
+	// A7 build 94: full-screen game backdrop behind the dialog - the PC
+	// reference loading screen shows the CS background collage
+	// (resource/*_loading.tga tiles) with the dialog centered on top,
+	// never a black screen. not an item: it must cover the whole screen
+	// beyond this dialog's 640x192 rect, so it stays parentless and is
+	// VidInit'd/Drawn from _VidInit()/Draw() directly
+	CMenuBackgroundBitmap screenBg;
 	CMenuProgressBar commonProgress;
 	CMenuProgressBar downloadProgress;
 	CMenuPicButton consoleButton;
@@ -233,7 +255,7 @@ void CMenuConnectionProgress::_Init( void )
 	consoleButton.bEnableTransitions = false;
 
 	disconnectButton.SetPicture( PC_DISCONNECT );
-	disconnectButton.szName = L( "GameUI_GameMenu_Disconnect" );
+	disconnectButton.szName = L( "GameUI_Cancel" );
 	disconnectButton.onReleased = VoidCb( &CMenuConnectionProgress::Disconnect );
 	disconnectButton.bEnableTransitions = false;
 
@@ -242,8 +264,10 @@ void CMenuConnectionProgress::_Init( void )
 	dialog.onPositive = VoidCb( &CMenuConnectionProgress::Disconnect );
 
 	title.iFlags = QMF_INACTIVE|QMF_DROPSHADOW;
-	title.eTextAlignment = QM_CENTER;
-	title.szName = sTitleString;
+	// A7 build 63: video reference - the real VGUI loading dialog has a
+	// "Loading..." caption top-left; the live status stays in commonText
+	title.eTextAlignment = QM_LEFT;
+	title.szName = L( "Loading..." );
 
 	skipButton.szName = L( "Skip" );
 	skipButton.onReleased.SetCommand( true, "http_skip\n" );
@@ -277,11 +301,15 @@ void CMenuConnectionProgress::_VidInit( void )
 	pos.y += uiStatic.yOffset;
 
 	title.SetCharSize( QM_DEFAULTFONT );
-	title.SetRect( 0, 16, 640, 20 );
+	title.SetRect( 20, 16, 600, 20 );
 
 	cursor -= 44;
 	consoleButton.SetRect( 188, cursor, UI_BUTTONS_WIDTH / 2, UI_BUTTONS_HEIGHT );
 	disconnectButton.SetRect( 338, cursor, UI_BUTTONS_WIDTH / 2, UI_BUTTONS_HEIGHT );
+
+	// A7 build 94: size the full-screen backdrop (parentless -> its
+	// VideInit picks ScreenWidth/Height and the collage layout itself)
+	screenBg.VidInit();
 
 	if( gpGlobals->developer )
 		consoleButton.Hide();
@@ -328,10 +356,19 @@ void CMenuConnectionProgress::Draw( void )
 	if( ( m_iState != STATE_MENU && CL_IsActive() ) || ( m_iState == STATE_NONE && m_pStack->Current() == this ) )
 	{
 		m_iState = STATE_NONE;
+		// A7 build 93: take the Esc/"Really disconnect?" confirmation box
+		// down with us - it lives in its own window stack and would
+		// otherwise survive over the game after the dialog closes
+		if( dialog.IsVisible( ))
+			dialog.Hide();
 		Hide();
 		return;
 	}
-	UI_FillRect( 0,0, gpGlobals->scrWidth, gpGlobals->scrHeight, m_iState == STATE_NONE ? 0xFF000000 : 0x40000000 );
+	// A7 build 94: the game's background collage fills the screen behind
+	// the dialog (reference: PC loading screen = art + centered box, not
+	// a black screen); the light GameUI dim stays on top of the art
+	screenBg.Draw();
+	UI_FillRect( 0,0, gpGlobals->scrWidth, gpGlobals->scrHeight, 0x40000000 );
 	CMenuBaseWindow::Draw();
 }
 
@@ -349,7 +386,15 @@ void UI_ConnectionProgress_Download( const char *pszFileName, const char *pszSer
 		return;
 
 	menu_connectionprogress->HandleDownload( pszFileName, pszServerName, iCurrent, iTotal, comment );
-	menu_connectionprogress->Show();
+
+	// A7 build 94: engine-driven flow - HandleDisconnect's error branch
+	// must never pop the main menu / server browser under the dialog
+	// (the engine opens the right window itself on failure), and a
+	// per-queued-file Show() would restart the open animation every time
+	menu_connectionprogress->m_iSource = SOURCE_CONSOLE;
+
+	// A7 build 96: strictly visible+active (re-layouts 192 -> 256 box)
+	menu_connectionprogress->EnsureShown();
 }
 
 void UI_ConnectionProgress_DownloadEnd( void )
@@ -357,9 +402,21 @@ void UI_ConnectionProgress_DownloadEnd( void )
 	if( menu_connectionprogress->m_iState == STATE_CONSOLE )
 		return;
 
-	menu_connectionprogress->m_iState = STATE_CONNECTING;
-	menu_connectionprogress->HandleDisconnect();
-	menu_connectionprogress->Show();
+	// A7 build 94: only meaningful while the download box is the one on
+	// screen (the dialog's own Cancel already moved it out of this state,
+	// so the http_clear that follows becomes a no-op here)
+	if( menu_connectionprogress->m_iState != STATE_DOWNLOAD )
+		return;
+
+	// downloads over - back to the resource-loading state so scr_loading
+	// drives the bar again. NO HandleDisconnect on purpose: its restore
+	// branch would pop Main + ServerBrowser over a still-running load
+	menu_connectionprogress->HandlePrecache();
+	menu_connectionprogress->m_iSource = SOURCE_CONSOLE;
+
+	// A7 build 96: EnsureShown keeps the dialog strictly visible+active
+	// (see its comment - a stale closing instance never drew, black load)
+	menu_connectionprogress->EnsureShown();
 }
 
 void UI_ConnectionProgress_Precache( void )
@@ -368,7 +425,7 @@ void UI_ConnectionProgress_Precache( void )
 		return;
 
 	menu_connectionprogress->HandlePrecache();
-	menu_connectionprogress->Show();
+	menu_connectionprogress->EnsureShown();
 }
 
 void UI_ConnectionProgress_Connect( const char *server ) // NULL for local server
@@ -378,7 +435,14 @@ void UI_ConnectionProgress_Connect( const char *server ) // NULL for local serve
 
 	menu_connectionprogress->m_iState = STATE_MENU;
 	menu_connectionprogress->HandleConnect( server );
-	menu_connectionprogress->Show();
+
+	// A7 build 94: engine-driven flow (see UI_ConnectionProgress_Download)
+	menu_connectionprogress->m_iSource = SOURCE_CONSOLE;
+
+	// A7 build 96: strictly visible+active - the single pre-load frame
+	// SCR_BeginLoadingPlaque presents before the synchronous server
+	// spawn must draw it, or the screen is black until svc_serverdata
+	menu_connectionprogress->EnsureShown();
 }
 
 void UI_ConnectionProgress_ChangeLevel( void )
@@ -388,7 +452,7 @@ void UI_ConnectionProgress_ChangeLevel( void )
 
 	menu_connectionprogress->m_iState = STATE_MENU;
 	menu_connectionprogress->SetCommonText( L( "Changing level on server" ) );
-	menu_connectionprogress->Show();
+	menu_connectionprogress->EnsureShown();
 }
 
 void UI_ConnectionProgress_ParseServerInfo( const char *server )
@@ -399,7 +463,7 @@ void UI_ConnectionProgress_ParseServerInfo( const char *server )
 	menu_connectionprogress->SetServer( server );
 	menu_connectionprogress->m_iState = STATE_CONNECTING;
 	menu_connectionprogress->SetCommonText( L( "GameUI_ParseServerInfo" ) );
-	menu_connectionprogress->Show();
+	menu_connectionprogress->EnsureShown();
 }
 
 void UI_ConnectionProgress_f( void )

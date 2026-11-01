@@ -167,4 +167,8 @@ void UI_JoinGame_Show( int param1, int param2 )
 	uiJoinGame.hasCancel    = param1 & 4;
 
 	uiJoinGame.Show();
+
+	// A7 build 73: runtime trace of the menu chain (test build)
+	Con_Printf( "MenuTrace: JoinGame shown, clientActive=%d\n",
+		uiStatic.client.IsActive( ) ? 1 : 0 );
 }

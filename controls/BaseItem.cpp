@@ -187,6 +187,19 @@ void CMenuBaseItem::CalcPosition()
 	}
 }
 
+// A7 build 58: uniform layout scaling for the fit-to-screen pass. Font
+// scales with the boxes so proportions never change.
+void CMenuBaseItem::ScaleLayout( float k )
+{
+	pos.x  = (int)( pos.x  * k + 0.5f );
+	pos.y  = (int)( pos.y  * k + 0.5f );
+	size.w = (int)( size.w * k + 0.5f );
+	size.h = (int)( size.h * k + 0.5f );
+
+	if( charSize > 0 )
+		charSize = Q_max( 1, (int)( charSize * k + 0.5f ));
+}
+
 void CMenuBaseItem::CalcSizes()
 {
 	m_scChSize = charSize;
@@ -219,6 +232,25 @@ void CMenuBaseItem::CalcSizes()
 
 		m_scSize.h = size + m_scSize.h - m_scPos.y;
 	}
+}
+
+// A7 floating dialogs: recompute the render position/size tree after the
+// logical coordinates or the parent-chain offset changed without a full
+// VidInit pass (float dialogs recompose through GetPositionOffset on
+// drag/layout). Rendering uses m_scPos/m_scSize and derived cached state
+// (see virtual CalcSizes), so a pos-only change leaves the item drawing at
+// its old place. Holders override to walk children top-down: children
+// compose the parent's render offset in CalcPosition, so the parent must
+// be recalculated first.
+void CMenuBaseItem::RecalcRenderTree( void )
+{
+	CalcPosition();
+	CalcSizes();
+}
+
+int CMenuBaseItem::GetVisualWidth( void ) const
+{
+	return size.w;
 }
 
 // we need to remap position, because resource files are keep screen at 640x480, but we in 1024x768

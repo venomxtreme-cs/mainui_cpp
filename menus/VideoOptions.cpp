@@ -79,7 +79,8 @@ void CMenuVidOptions::UpdateConfig( void )
 	float val2 = RemapVal( brightness.GetCurrentValue(), 0.0, 1.0, 0.0, 3.0 );
 	EngFuncs::CvarSetValue( "gamma", val1 );
 	EngFuncs::CvarSetValue( "brightness", val2 );
-	EngFuncs::ProcessImage( hTestImage, val1, val2 );
+	if( hTestImage )
+		EngFuncs::ProcessImage( hTestImage, val1, val2 );
 }
 
 void CMenuVidOptions::GetConfig( void )
@@ -89,7 +90,8 @@ void CMenuVidOptions::GetConfig( void )
 
 	gammaIntensity.SetCurrentValue( RemapVal( val1, 1.8f, 3.0f, 0.0f, 1.0f ) );
 	brightness.SetCurrentValue( RemapVal( val2, 0.0f, 3.0f, 0.0f, 1.0f ) );
-	EngFuncs::ProcessImage( hTestImage, val1, val2 );
+	if( hTestImage )
+		EngFuncs::ProcessImage( hTestImage, val1, val2 );
 
 	gammaIntensity.SetOriginalValue( val1 );
 	brightness.SetOriginalValue( val2 );
@@ -118,39 +120,31 @@ CMenuVidOptions::Ownerdraw
 */
 void CMenuVidOptions::CMenuVidPreview::Draw( )
 {
-	int		color = 0xFFFF0000; // 255, 0, 0, 255
-	int		viewport[4];
-	int		viewsize, size, sb_lines;
+	int		color = 0xFFFF0000; // 255, 0, 0, 255 - classic GoldSrc preview frame
 
-#if LEGACY_VIEWSIZE
-	viewsize = EngFuncs::GetCvarFloat( "viewsize" );
-#else
-	viewsize = 120;
-#endif
+	// A7-full-port: the gfx/shell/gamma test picture is xash3d art (user
+	// report: "other menus still look xash3d style extras bmp image").
+	// Draw the classic grayscale gamma ramp instead: black -> white steps
+	// still preview gamma/brightness because the engine applies both to
+	// everything drawn on screen.
+	UI_FillRect( m_scPos, m_scSize, uiColorBlack );
 
-	if( viewsize >= 120 )
-		sb_lines = 0;	// no status bar at all
-	else if( viewsize >= 110 )
-		sb_lines = 24;	// no inventory
-	else sb_lines = 48;
+	const int steps = 16;
+	int rampX = m_scPos.x + (int)( 4 * uiStatic.scaleX );
+	int rampY = m_scPos.y + (int)( 4 * uiStatic.scaleY );
+	int rampW = m_scSize.w - (int)( 8 * uiStatic.scaleX );
+	int rampH = m_scSize.h - (int)( 8 * uiStatic.scaleY );
 
-	size = Q_min( viewsize, 100 );
+	for( int i = 0; i < steps; i++ )
+	{
+		int g = i * 255 / ( steps - 1 );
+		unsigned int c = 0xFF000000 | ( g << 16 ) | ( g << 8 ) | g;
+		int x0 = rampX + rampW * i / steps;
+		int x1 = rampX + rampW * ( i + 1 ) / steps;
 
-	viewport[2] = m_scSize.w * size / 100;
-	viewport[3] = m_scSize.h * size / 100;
+		UI_FillRect( x0, rampY, x1 - x0, rampH, c );
+	}
 
-	if( viewport[3] > m_scSize.h - sb_lines )
-		viewport[3] = m_scSize.h - sb_lines;
-	if( viewport[3] > m_scSize.h )
-		viewport[3] = m_scSize.h;
-
-	viewport[2] &= ~7;
-	viewport[3] &= ~1;
-
-	viewport[0] = (m_scSize.w - viewport[2]) / 2;
-	viewport[1] = (m_scSize.h - sb_lines - viewport[3]) / 2;
-
-	UI_DrawPic( m_scPos.x + viewport[0], m_scPos.y + viewport[1], viewport[2], viewport[3], uiColorWhite, szPic );
 	UI_DrawRectangleExt( m_scPos, m_scSize, color, ((CMenuVidOptions*)Parent())->outlineWidth );
 }
 
@@ -161,13 +155,14 @@ CMenuVidOptions::Init
 */
 void CMenuVidOptions::_Init( void )
 {
-	hTestImage = EngFuncs::PIC_Load( ART_GAMMA, PIC_KEEP_SOURCE | PIC_EXPAND_SOURCE );
+	// A7-full-port: no xash gamma test art - the preview draws a grayscale
+	// ramp, which the engine gamma/brightness applies to directly
+	hTestImage = 0;
 
 	banner.SetPicture( ART_BANNER );
 
 	testImage.iFlags = QMF_INACTIVE;
 	testImage.SetRect( 390, 225, 480, 450 );
-	testImage.SetPicture( ART_GAMMA );
 
 	int height = 280;
 

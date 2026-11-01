@@ -59,17 +59,28 @@ void CMenuBaseWindow::Show()
 	}
 #endif
 	EnableTransition( ANIM_OPENING );
+
+	// A7 build 87: the newly shown window picks its sound set (the main
+	// menu keeps the GameUI sounds, every other window gets GoldSource)
+	UI_UpdateSoundSet();
 }
 
 void CMenuBaseWindow::Hide()
 {
 	if( m_pStack == &uiStatic.menu ) // hack!
 	{
-		EngFuncs::PlayLocalSound( uiStatic.sounds[SND_OUT] );
+		// A7 build 64: SND_OUT is silent now (real GameUI) - guard the
+		// direct engine call.
+		if( uiStatic.sounds[SND_OUT][0] )
+			EngFuncs::PlayLocalSound( uiStatic.sounds[SND_OUT] );
 	}
 
 	m_pStack->Remove( this );
 	EnableTransition( ANIM_CLOSING );
+
+	// A7 build 87: SND_OUT above played in the closing window's context;
+	// now follow whatever window became topmost
+	UI_UpdateSoundSet();
 }
 
 bool CMenuBaseWindow::IsVisible() const

@@ -32,6 +32,8 @@ public:
 
 	CMenuCheckBox();
 	void VidInit() override;
+	void CalcSizes() override;
+	int GetVisualWidth( void ) const override;
 	bool KeyUp( int key ) override;
 	bool KeyDown( int key ) override;
 	void Draw( void ) override;

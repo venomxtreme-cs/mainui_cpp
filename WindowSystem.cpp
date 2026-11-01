@@ -58,6 +58,19 @@ void CWindowStack::VidInit( bool calledOnce )
 	}
 }
 
+// A7 floating dialogs: the bottom-most (first added, still open) window of
+// the stack. This window stays visible underneath floating root windows -
+// for the menu stack that's the main menu.
+static int WindowStack_BottomIndex( CUtlLinkedList<CMenuBaseWindow *> &stack )
+{
+	FOR_EACH_LL( stack, i )
+	{
+		if( !FBitSet( stack[i]->iFlags, QMF_CLOSING ))
+			return i;
+	}
+	return stack.InvalidIndex();
+}
+
 bool CWindowStack::IsVisible( const CMenuBaseWindow *menu ) const
 {
 	if( menu == Current() )
@@ -81,7 +94,15 @@ void CWindowStack::Update( )
 	CUtlVector<CMenuBaseWindow *> drawList( 16 );
 	CUtlVector<int> removeList( 16 );
 
-	bool stop = Current()->IsRoot();
+	// A7 GoldSource remake (build 90, user request #2): the bottom-most
+	// window of the stack (the main menu) stays visible underneath a
+	// floating root dialog - "main menu items remain visible behind
+	// dialog", like the reference screenshots (Options/New Game opened
+	// over the menu list) and like original CS 1.6 GoldSource, where
+	// ESC'ing in-game falls back to the menu over the game world.
+	// (build 89 had hid it behind root dialogs - that matched neither
+	// reference, so the hideBottom gate is gone entirely.)
+	int bottomIdx = WindowStack_BottomIndex( stack );
 
 	// always add current window
 	drawList.AddToTail( Current() );
@@ -111,40 +132,38 @@ void CWindowStack::Update( )
 		if( stack[i]->iFlags & QMF_HIDDEN )
 			continue;
 
-		if( stop ) // we don't need to search windows to draw
-			continue;
-
-		// maximized, no need to go further anymore,
-		// but we need to check for closing windows, so don't break
 		if( stack[i]->IsRoot() )
 		{
-			stop = true;
+			// A7 GoldSource remake (build 90): the bottom window (main
+			// menu) is always drawn underneath the active dialog -
+			// dialogs float over the menu list like in the reference
+			if( i == bottomIdx )
+				drawList.AddToTail( stack[i] );
+			continue;
 		}
-		else
+
+		// start region test
+		bool inside = false;
+
+		Rect window( stack[i]->GetRenderPosition(), stack[i]->GetRenderSize() );
+
+		if( !inside )
 		{
-			// start region test
-			bool inside = false;
-
-			Rect window( stack[i]->GetRenderPosition(), stack[i]->GetRenderSize() );
-
-			if( !inside )
+			FOR_EACH_VEC( drawList, j )
 			{
-				FOR_EACH_VEC( drawList, j )
-				{
-					if( drawList[j]->eTransitionType )
-						continue; // skip animating window
+				if( drawList[j]->eTransitionType )
+					continue; // skip animating window
 
-					Rect drawnWindow( drawList[j]->GetRenderPosition(), drawList[j]->GetRenderSize() );
+				Rect drawnWindow( drawList[j]->GetRenderPosition(), drawList[j]->GetRenderSize() );
 
-					if( drawnWindow.IsInside( window ))
-						inside = true;
-				}
+				if( drawnWindow.IsInside( window ))
+					inside = true;
 			}
-
-			// region test complete
-			if( inside )
-				continue;
 		}
+
+		// region test complete
+		if( inside )
+			continue;
 
 		// add to draw list
 		drawList.AddToTail( stack[i] );
@@ -235,7 +254,11 @@ void CWindowStack::Add( CMenuBaseWindow *menu )
 	{
 		if( stack[active]->IsRoot() && menu->IsRoot() )
 		{
-			stack[active]->EnableTransition( CMenuBaseWindow::ANIM_CLOSING );
+			// A7 floating dialogs: the bottom-most window (main menu) stays
+			// fully visible under the incoming dialog - no fade-out. Only
+			// intermediate pages fade out; they're hidden behind the new one.
+			if( active != WindowStack_BottomIndex( stack ))
+				stack[active]->EnableTransition( CMenuBaseWindow::ANIM_CLOSING );
 		}
 	}
 
@@ -285,7 +308,16 @@ void CWindowStack::Remove( CMenuBaseWindow *menu )
 				active = i; // maybe isn't best solution
 
 				if( stack[active]->IsRoot() && menu->IsRoot() )
-					stack[active]->EnableTransition( CMenuBaseWindow::ANIM_OPENING );
+				{
+					// A7 floating dialogs: the bottom window (main menu) was
+					// visible under the closed dialog the whole time - no
+					// fade-in, it would flash from transparent. Intermediate
+					// pages animate back in like before.
+					if( active == WindowStack_BottomIndex( stack ))
+						stack[active]->DisableTransition();
+					else
+						stack[active]->EnableTransition( CMenuBaseWindow::ANIM_OPENING );
+				}
 
 				// notify new active window about changed mouse position
 				stack[active]->MouseMove( uiStatic.cursorX, uiStatic.cursorY );
@@ -302,7 +334,14 @@ void CWindowStack::Remove( CMenuBaseWindow *menu )
 		}
 		else
 		{
-			EngFuncs::KEY_SetDest( KEY_CONSOLE );
+			// A7 build 96: outside the game a stack dropping its last
+			// window falls back to the MAIN menu (nextFrameActive is
+			// exactly what UI_SetActiveMenu(true) does), never to the
+			// legacy full-screen Xash console - bouncing here is what
+			// re-unveiled the console after restart/disconnect, and on
+			// a stale closing instance it fired every frame
+			EngFuncs::KEY_SetDest( KEY_MENU );
+			uiStatic.nextFrameActive = true;
 		}
 	}
 

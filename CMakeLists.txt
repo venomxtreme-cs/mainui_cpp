@@ -34,9 +34,11 @@ if(NOT XASH_SDK)
 endif()
 
 file(GLOB MAINUI_CONTROLS_SOURCES "controls/*.cpp")
-file(GLOB MAINUI_MENUS_SOURCES "menus/*.cpp" "menus/dynamic/*.cpp" "menus/client/*.cpp")
+# CONFIGURE_DEPENDS: ninja re-checks the glob each build, so newly added menu
+# files (added after the first Gradle configure) aren't silently dropped
+file(GLOB MAINUI_MENUS_SOURCES CONFIGURE_DEPENDS "menus/*.cpp" "menus/dynamic/*.cpp" "menus/client/*.cpp")
 file(GLOB MAINUI_FONT_RENDER_SOURCES "font/*.cpp")
-file(GLOB MAINUI_SOURCES "miniutl/*.cpp" "*.cpp")
+file(GLOB MAINUI_SOURCES CONFIGURE_DEPENDS "miniutl/*.cpp" "*.cpp")
 
 add_library(menu SHARED ${MAINUI_CONTROLS_SOURCES} ${MAINUI_MENUS_SOURCES} ${MAINUI_FONT_RENDER_SOURCES} ${MAINUI_SOURCES} ${CMAKE_SOURCE_DIR}/common/interface.cpp)
 

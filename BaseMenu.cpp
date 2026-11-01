@@ -30,6 +30,8 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 #include "FontManager.h"
 #include "cursor_type.h"
 #include "utflib.h"
+// A7 build 87: UI_UpdateSoundSet needs the full CMenuBaseWindow (IsMainMenuRoot)
+#include "BaseWindow.h"
 
 cvar_t		*ui_showmodels;
 cvar_t		*ui_showclassmodels;
@@ -44,32 +46,76 @@ static CMenuEntry	*s_pEntries = NULL;
 
 const char	*uiSoundOldPrefix	= "media/";
 const char	*uiSoundNewPrefix	= "sound/common/";
+// A7 build 64: the original CS 1.6 GameUI sound set, reverse-
+// engineered like the video's GameUI: every VGUI button plays
+// sound/UI/buttonclick.wav on press and buttonrollover.wav on hover;
+// buttonclickrelease.wav marks grab/release/invalid state changes.
+// The old media/launch_* set is the WON Half-Life menu, not the
+// 2003 GameUI. Menu open/close (SND_IN/SND_OUT) is silent, exactly
+// like the real GameUI - the triggering button already played its
+// click. All three wavs ship in valve/sound/UI (device + valve zip).
 const char	*uiSounds[] = {
-	"media/launch_upmenu1.wav",
-	"media/launch_dnmenu1.wav",
-	"media/launch_select2.wav",
-	"",
-	"media/launch_glow1.wav",
-	"media/launch_deny2.wav",
-	"media/launch_select1.wav",
-	"media/launch_deny1.wav",
-	"",
-	""
+	"",                                  // SND_IN      silent, real GameUI
+	"",                                  // SND_OUT     silent, real GameUI
+	"sound/UI/buttonclick.wav",          // SND_LAUNCH  press/activate
+	"sound/UI/buttonrollover.wav",       // SND_ROLLOVER hover
+	"sound/UI/buttonclick.wav",          // SND_GLOW    checkbox/toggle press
+	"sound/UI/buttonclickrelease.wav",   // SND_BUZZ    invalid action
+	"sound/UI/buttonclickrelease.wav",   // SND_KEY     key grabbed/changed
+	"sound/UI/buttonclickrelease.wav",   // SND_REMOVEKEY unbind/remove
+	"sound/UI/buttonrollover.wav",       // SND_MOVE    focus moved
+	""                                   // SND_NULL
+};
+
+// A7 build 87: the original WON/GoldSource launch_* set for every window
+// except the main menu (user request: "sub-menus use original GoldSource
+// sounds, just the vgui main menu sound"). Same names as upstream mainui;
+// when media/ is absent the loader rewrites them to sound/common/launch_*
+const char	*uiSoundsGoldSource[] = {
+	"media/launch_upmenu1.wav",  // SND_IN       menu opening
+	"media/launch_dnmenu1.wav",  // SND_OUT      menu closing
+	"media/launch_select2.wav",  // SND_LAUNCH   press/activate
+	"",                          // SND_ROLLOVER (silent upstream too)
+	"media/launch_glow1.wav",    // SND_GLOW     checkbox/toggle press
+	"media/launch_deny2.wav",    // SND_BUZZ     invalid action
+	"media/launch_select1.wav",  // SND_KEY      key grabbed/changed
+	"media/launch_deny1.wav",    // SND_REMOVEKEY unbind/remove
+	"",                          // SND_MOVE     focus moved
+	""                           // SND_NULL
 };
 
 // they match default WON colors.lst now, except alpha
 // a1ba: made uiColorHelp brighter so it's easier to read
-unsigned int uiColorHelp        = 0xFFA0A0A0; // 160, 160, 160, 255 // hint letters color
-unsigned int uiPromptBgColor    = 0xFF383838; // 56,  56,  56,  255 // dialog background color
-unsigned int uiPromptTextColor  = 0xFFF0B418; // 240, 180, 24,  255 // dialog or button letters color
-unsigned int uiPromptFocusColor = 0xFFFFFF00; // 255, 255,  0,  255 // dialog or button focus letters color
-unsigned int uiInputTextColor   = 0xFFF0B418; // 240, 180, 24,  255
-unsigned int uiInputBgColor     = 0x80383838; // 56,  56,  56,  128 // field, scrollist, checkbox background color
-unsigned int uiInputFgColor     = 0xFF555555; // 85,  85,  85,  255 // field, scrollist, checkbox foreground color
+// A7 build 87: defaults re-sampled pixel-by-pixel from the original
+// CS 1.6 GameUI reference screenshots (panel #4c5844, secondary #3e4637,
+// accent #c4b550, text #d8ded3, borders #889180/#282e22)
+// A7 build 90: palette audit vs PC GoldSource GameUI - labels are the light
+// warm white #d8ded3 (uiColorText/uiPromptTextColor), focus/selection keeps
+// the GoldSource yellow-tinted accent #c4b550, ETF_SHADOW always paints pure
+// black (uiColorBlack re-packed to the text alpha in UI_DrawString) and
+// disabled/greyed items now fade to a plain mid grey instead of dark olive.
+unsigned int uiColorHelp        = 0xFFA0AA95; // 160, 170, 149, 255 // hint letters color (text-3)
+unsigned int uiPromptBgColor    = 0xFF4C5844; // 76,  88,  68,  255 // dialog background color (--bg)
+unsigned int uiPromptTextColor  = 0xFFD8DED3; // 216, 222, 211, 255 // dialog or button letters color
+unsigned int uiPromptFocusColor = 0xFFC4B550; // 196, 181, 80,  255 // dialog or button focus letters color (--accent)
+unsigned int uiInputTextColor   = 0xFFC4B550; // 196, 181, 80,  255 // active/focused letters (--accent)
+unsigned int uiInputBgColor     = 0xFF3E4637; // 62,  70,  55,  255 // field, scrollist, checkbox background (--secondary-bg)
+unsigned int uiInputFgColor     = 0xFF282E22; // 40,  46,  34,  255 // field border/foreground (--border-dark)
 unsigned int uiColorWhite       = 0xFFFFFFFF; // 255, 255, 255, 255 // useful for bitmaps
-unsigned int uiColorDkGrey      = 0x80404040; // 64,  64,  64,  128 // shadow and grayed items
+// build 90: PC GoldSource grays disabled items out to a neutral mid grey -
+// the dark olive #282e22 read as dirt on the panel. Not used as a shadow
+// anymore: ETF_SHADOW packs uiColorBlack (see UI_DrawString).
+unsigned int uiColorDkGrey      = 0x80808080; // 128, 128, 128, 128 // grayed/disabled items
 unsigned int uiColorBlack       = 0x80000000; //  0,   0,   0,  128 // some controls background
-unsigned int uiColorConsole     = 0xFFF0B418; // just for reference
+unsigned int uiColorConsole     = 0xFFC4B550; // just for reference
+
+// A7 build 87 palette tokens (sampled from the GameUI reference)
+unsigned int uiColorBg          = 0xFF4C5844; // #4c5844 panel background
+unsigned int uiColorSecondaryBg = 0xFF3E4637; // #3e4637 input/list background
+unsigned int uiColorAccent      = 0xFFC4B550; // #c4b550 gold accent (focus, active tab, checked)
+unsigned int uiColorBorderLight = 0xFF889180; // #889180 bevel light
+unsigned int uiColorBorderDark  = 0xFF282E22; // #282e22 bevel dark
+unsigned int uiColorText        = 0xFFD8DED3; // #d8ded3 control labels (GameUI text-2)
 
 // color presets (this is nasty hack to allow color presets to part of text)
 const unsigned int g_iColorTable[8] =
@@ -80,7 +126,7 @@ const unsigned int g_iColorTable[8] =
 0xFFFFFF00, // yellow
 0xFF0000FF, // blue
 0xFF00FFFF, // cyan
-0xFFF0B418, // dialog or button letters color
+0xFFC4B550, // dialog or button letters color (A7: accent)
 0xFFFFFFFF, // white
 };
 
@@ -274,6 +320,70 @@ void UI_DrawRectangleExt( int in_x, int in_y, int in_w, int in_h, const unsigned
 
 /*
 =================
+UI_DrawBevel
+
+A7 retheme: classic two-tone bevel border, drawn outside the rect like
+UI_DrawRectangleExt. raised = light top/left, dark bottom/right;
+sunken = inverted (classic input field look).
+=================
+*/
+void UI_DrawBevel( int x, int y, int w, int h, bool bSunken, int outlineWidth )
+{
+	unsigned int light = uiColorBorderLight;
+	unsigned int dark  = uiColorBorderDark;
+
+	if( outlineWidth <= 0 ) outlineWidth = uiStatic.outlineWidth;
+
+	if( bSunken )
+	{
+		unsigned int tmp = light; light = dark; dark = tmp;
+	}
+
+	UI_DrawRectangleExt( x, y, w, h, light, outlineWidth, QM_TOP | QM_LEFT );
+	UI_DrawRectangleExt( x, y, w, h, dark,  outlineWidth, QM_BOTTOM | QM_RIGHT );
+}
+
+/*
+=================
+UI_DrawTriangle
+
+A7 retheme: pixel-triangle up/down arrow, drawn from axis-aligned
+rectangles (used where gfx/shell arrow art is missing).
+=================
+*/
+void UI_DrawTriangle( Point pos, Size size, bool bUp, unsigned int color )
+{
+	int u = (int)( uiStatic.scaleX + 0.5f );
+	if( u < 1 ) u = 1;
+
+	int h = size.h;
+	int w = size.w;
+	if( h < u * 2 ) h = u * 2;
+	if( w > h ) w = h; // keep the triangle reasonably narrow
+
+	int rows = h / u;
+	int cols = w / u;
+	if( rows < 2 ) rows = 2;
+	if( cols < 2 ) cols = 2;
+
+	int x0 = pos.x + ( size.w - cols * u ) / 2;
+	int y0 = pos.y + ( size.h - rows * u ) / 2;
+
+	for( int i = 0; i < rows; i++ )
+	{
+		int span = cols * ( rows - i ) / rows; // widest row first (points down)
+		if( span < 1 ) span = 1;
+
+		int row = bUp ? ( rows - 1 - i ) : i;
+		int x = x0 + ( cols - span ) * u / 2;
+		int y = y0 + row * u;
+
+		UI_FillRect( x, y, span * u, u, color );
+	}
+}
+
+/*
+=================
 UI_DrawString
 =================
 */
@@ -291,7 +401,26 @@ int UI_DrawString( HFont font, int x, int y, int w, int h,
 	if( flags & ETF_SHADOW )
 	{
 		shadowModulate = PackAlpha( uiColorBlack, UnpackAlpha( color ));
-		shadowOffset = Q_max( 1, uiStatic.scaleX * 3 );
+		// build 90: PC GoldSource drops the shadow exactly one device pixel
+		// down/right - the old 3x-scale offset doubled the letters over
+		// themselves and read as blur/glow instead of a hard black shadow
+		shadowOffset = Q_max( 1, (int)( uiStatic.scaleX + 0.5f ));
+	}
+
+	// build 90: some labels pass a fixed DESIGN height (the main menu
+	// buttons hardcode 26 in menu units) while the font is rasterized at
+	// the device scale; remap so wrapping, ellipsis and vertical centering
+	// measure the very line the glyphs were rasterized for. Callers that
+	// already pass m_scChSize (or anything at scale 1) normalize onto an
+	// equal value and are left untouched.
+	if( charH > 0 )
+	{
+		// must use the SAME truncation as m_scChSize (charSize * scaleY) and
+		// CFontBuilder::Create, otherwise a 1px rounding gap stops matching
+		int deviceCharH = (int)((float)charH * uiStatic.scaleY );
+
+		if( deviceCharH != charH && deviceCharH == g_FontMgr->GetFontRequestTall( font ))
+			charH = deviceCharH;
 	}
 
 	modulate = color;
@@ -316,7 +445,9 @@ int UI_DrawString( HFont font, int x, int y, int w, int h,
 		h = charH;
 
 	int i = 0;
-	int ellipsisWide = g_FontMgr->GetEllipsisWide( font );
+	// build 90: measures "..." in the same units the loop below accumulates
+	// (the possibly re-mapped charH), so wrapping can't truncate ASCII early
+	int ellipsisWide = g_FontMgr->GetEllipsisWideScaled( font, charH );
 	bool giveup = false;
 
 	while( string[i] && !giveup )
@@ -604,6 +735,9 @@ void UI_CloseClientMenu( void )
 	if( !uiStatic.client.IsActive() )
 		return;
 
+	// A7 build 73: runtime trace of the menu chain (test build)
+	Con_Printf( "MenuTrace: UI_CloseClientMenu\n" );
+
 	uiStatic.client.Clean();
 	EngFuncs::KEY_ClearStates();
 	EngFuncs::KEY_SetDest( KEY_GAME );
@@ -673,7 +807,7 @@ void UI_UpdateMenu( float flTime )
 	// translation strings could will be loaded at this moment
 	if( uiStatic.nextFrameActive )
 	{
-		if( !uiStatic.menu.IsActive() )
+		if( !uiStatic.menu.IsActive( ))
 			UI_Main_Menu();
 
 		uiStatic.nextFrameActive = false;
@@ -1031,28 +1165,64 @@ static void UI_LoadBackgroundMapList( void )
 	EngFuncs::COM_FreeFile( afile );
 }
 
-static void UI_LoadSounds( void )
+static void UI_LoadSoundsFrom( const char * const *sounds, char ( &dest )[SND_COUNT][40] )
 {
-	memset( uiStatic.sounds, 0, sizeof( uiStatic.sounds ) );
+	memset( dest, 0, sizeof( dest ) );
 
 	if ( uiStatic.lowmemory )
 		return;
 
 	for ( int i = 0; i < SND_COUNT; i++ )
 	{
-		if ( !uiSounds[i] || *uiSounds[i] == '\0' )
+		if ( !sounds[i] || *sounds[i] == '\0' )
 			continue;
 
-		if ( !EngFuncs::FileExists( uiSounds[i] ) )
+		if ( !EngFuncs::FileExists( sounds[i] ) )
 		{
 			size_t len = strlen( uiSoundOldPrefix );
 
-			if ( !strncmp( uiSounds[i], uiSoundOldPrefix, len ) )
-				snprintf( uiStatic.sounds[i], sizeof( uiStatic.sounds[i] ), "%s%s", uiSoundNewPrefix, uiSounds[i] + len );
+			if ( !strncmp( sounds[i], uiSoundOldPrefix, len ) )
+				snprintf( dest[i], sizeof( dest[i] ), "%s%s", uiSoundNewPrefix, sounds[i] + len );
 		}
 		else
-			Q_strncpy( uiStatic.sounds[i], uiSounds[i], sizeof( uiStatic.sounds[i] ) );
+			Q_strncpy( dest[i], sounds[i], sizeof( dest[i] ) );
 	}
+}
+
+// A7 build 87: both sets are resolved once; window Show/Hide swaps the
+// active one at runtime (see UI_UpdateSoundSet)
+static char uiSndCacheGameUI[SND_COUNT][40];
+static char uiSndCacheGold[SND_COUNT][40];
+
+static void UI_LoadSounds( void )
+{
+	UI_LoadSoundsFrom( uiSounds, uiSndCacheGameUI );
+	UI_LoadSoundsFrom( uiSoundsGoldSource, uiSndCacheGold );
+
+	// the menu opens on the main menu, so start with the GameUI set
+	memcpy( uiStatic.sounds, uiSndCacheGameUI, sizeof( uiStatic.sounds ));
+}
+
+// A7 build 87: runtime sound-set switch - the main menu keeps the 2003
+// GameUI sounds, every other window uses the original GoldSource set
+void UI_SetSoundSet( bool goldSource )
+{
+	memcpy( uiStatic.sounds,
+		goldSource ? uiSndCacheGold : uiSndCacheGameUI,
+		sizeof( uiStatic.sounds ));
+}
+
+// pick the set for whatever window now sits on top of the stacks: the
+// main menu root is the only GameUI-sound window; dialogs on the menu
+// stack and the in-game client windows (buy menu) get GoldSource
+void UI_UpdateSoundSet( void )
+{
+	CMenuBaseWindow *top = uiStatic.client.Current();
+
+	if( !top )
+		top = uiStatic.menu.Current();
+
+	UI_SetSoundSet( !top || !top->IsMainMenuRoot( ));
 }
 
 /*
@@ -1090,6 +1260,28 @@ int UI_VidInit( void )
 	{
 		uiStatic.scaleX = uiStatic.scaleY = height / 768.0f;
 		uiStatic.yOffset = 0;
+	}
+
+	// A7 build 60: scale floor vs the RAW screen. A floor computed from the
+	// same inset-shrunk width/height as the branches above could never
+	// trigger (both branches already yield exactly that fit) - dead code.
+	// Broken Android inset reporting halves the usable height on some
+	// devices, shrinking the WHOLE UI to about half size while framed
+	// dialogs each compensated by their own factor (user report: "different
+	// sizes", "disorganized"). Never let the scale fall below 85% of the
+	// RAW-screen fit - one global correction keeps every menu, dialog and
+	// font consistent. Healthy devices already sit at >= 0.85 * fit and are
+	// untouched.
+	{
+		float fitRaw = Q_min( ScreenWidth / 1024.0f, ScreenHeight / 768.0f );
+
+		if( fitRaw > 0.0f && uiStatic.scaleX < fitRaw * 0.85f )
+		{
+			uiStatic.scaleX = uiStatic.scaleY = fitRaw * 0.85f;
+
+			// center the 1024x768 menu in the usable area again
+			uiStatic.yOffset = height / ( 2.0f * uiStatic.scaleY ) - 768.0f / 2.0f;
+		}
 	}
 
 	uiStatic.xOffset = uiStatic.safeLeft / uiStatic.scaleX;
@@ -1220,7 +1412,10 @@ void UI_Init( void )
 
 	gMenu.m_gameinfo = *gi;
 
-	uiStatic.renderPicbuttonText = gMenu.m_gameinfo.flags & GFL_RENDER_PICBUTTON_TEXT;
+	// A7-full-port: original CS 1.6 GameUI renders menu buttons as text, not
+	// the stock xash/WON picture atlas (gfx/shell/btns_main.bmp - the orange
+	// bubble letters). Force text rendering regardless of the gameinfo flag.
+	uiStatic.renderPicbuttonText = true;
 
 	// trying to load colors.lst
 	UI_ApplyCustomColors ();

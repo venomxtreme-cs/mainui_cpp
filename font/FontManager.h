@@ -41,6 +41,9 @@ public:
 	HFont GetFontByName( const char *name );
 	void  GetCharABCWide( HFont font, int ch, int &a, int &b, int &c );
 	int   GetFontTall( HFont font );
+	// build 90: device line height the label is laid out with (falls back to
+	// GetFontTall for fonts that were built outside CFontBuilder)
+	int   GetFontRequestTall( HFont font );
 	int   GetFontAscent( HFont font );
 	bool  GetFontUnderlined( HFont font );
 
@@ -69,6 +72,9 @@ public:
 	CBaseFont *GetIFontFromHandle( HFont font );
 
 	int GetEllipsisWide( HFont font ); // cached wide of "..."
+	// build 90: same width, but in the units UI_DrawString measures with -
+	// the scaled line when draw-time font scaling is compiled in
+	int GetEllipsisWideScaled( HFont font, int charH );
 
 	bool FindFontDataFile( const char *name, int tall, int weight, int flags, char *dataFile, size_t dataFileChars );
 	unsigned char *LoadFontDataFile( const char *virtualpath, int *length = nullptr );

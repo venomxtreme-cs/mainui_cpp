@@ -93,7 +93,10 @@ void CFreeTypeFont::GetCharRGBA(int ch, Point pt, Size sz, unsigned char *rgba, 
 		GetCharABCWidths( ch, a, b, c );
 	}
 
-	if(( error = FT_Load_Glyph( face, idx, FT_LOAD_RENDER | FT_LOAD_TARGET_NORMAL )))
+	// build 90: force the auto-hinter at the DEVICE pixel size FT_Set_Pixel_Sizes
+	// gave us - a hinted glyph is rasterized 1:1 for this uiScale, so text stays
+	// crisp instead of being a blurry unhinted bitmap that later gets rescaled
+	if(( error = FT_Load_Glyph( face, idx, FT_LOAD_RENDER | FT_LOAD_TARGET_NORMAL | FT_LOAD_FORCE_AUTOHINT )))
 	{
 		Con_Printf( "Error in FT_Load_Glyph: %x\n", error );
 		return;

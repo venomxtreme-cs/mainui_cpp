@@ -195,15 +195,25 @@ void CMenuSlider::Draw( void )
 		* ( m_scSize.w - m_iSliderOutlineWidth - (m_scCenterBox.w) );
 
 
-	UI_DrawRectangleExt( m_scPos.x + m_iSliderOutlineWidth / 2, m_scPos.y + m_iSliderOutlineWidth, m_scSize.w - m_iSliderOutlineWidth, m_scCenterBox.h, uiInputBgColor, m_iSliderOutlineWidth );
-	if( eFocusAnimation == QM_HIGHLIGHTIFFOCUS && this == m_pParent->ItemAtCursor())
-		UI_DrawPic( sliderX, m_scPos.y, m_scCenterBox.w, m_scSize.h, uiColorHelp, imgSlider );
-	else
-		UI_DrawPic( sliderX, m_scPos.y, m_scCenterBox.w, m_scSize.h, uiColorWhite, imgSlider );
+	// A7 retheme: dark groove (cs16.css --slider-bg) + sunken bevel
+	Point trackPos( m_scPos.x + m_iSliderOutlineWidth / 2, m_scPos.y + m_iSliderOutlineWidth );
+	Size trackSize( m_scSize.w - m_iSliderOutlineWidth, m_scCenterBox.h );
+
+	UI_FillRect( trackPos, trackSize, 0xFF1F1F1F );
+	UI_DrawBevel( trackPos, trackSize, true );
+
+	// A7: drawn knob (gfx/shell slider art missing from data):
+	// cs16 --slider color, accent while focused
+	Point knobPos( sliderX, m_scPos.y );
+	Size knobSize( m_scCenterBox.w, m_scSize.h );
+	bool bKnobFocus = ( this == m_pParent->ItemAtCursor() );
+
+	UI_FillRect( knobPos, knobSize, bKnobFocus ? uiColorAccent : 0xFF7F8C7F );
+	UI_DrawBevel( knobPos, knobSize, false );
 
 
 	textHeight = m_scPos.y - (m_scChSize * 1.5f);
-	UI_DrawString( font, m_scPos.x, textHeight, m_scSize.w, m_scChSize, szName, uiColorHelp, m_scChSize, eTextAlignment, textflags | ETF_FORCECOL );
+	UI_DrawString( font, m_scPos.x, textHeight, m_scSize.w, m_scChSize, szName, uiColorText, m_scChSize, eTextAlignment, textflags | ETF_FORCECOL );
 }
 
 void CMenuSlider::UpdateEditable()

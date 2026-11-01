@@ -37,10 +37,20 @@ public:
 	bool KeyUp( int key ) override;
 	bool KeyDown( int key ) override;
 	void Draw( void ) override;
+	int GetVisualWidth( void ) const override;
 	bool HotKey( int key ) override;
 
 	void SetPicture( EDefaultBtns ID );
 	void SetPicture( const char *filename, int hotkey = 0 );
+
+	// Flat text with a custom font and height (classic original-CS game-menu
+	// buttons); all other menus keep the default picture/blur rendering.
+	void SetCustomTextStyle( HFont hfont, int textHeight )
+	{
+		font = hfont;
+		m_iTextHeightOverride = textHeight;
+		m_bCustomTextStyle = true;
+	}
 
 	bool bEnableTransitions;
 	bool bPulse;
@@ -57,6 +67,8 @@ private:
 	int button_id;
 	int iFocusStartTime;
 	int iOldState;
+	int m_iTextHeightOverride;
+	bool m_bCustomTextStyle;
 };
 
 #endif

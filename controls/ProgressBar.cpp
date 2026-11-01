@@ -23,6 +23,7 @@ CMenuProgressBar::CMenuProgressBar() : BaseClass()
 	m_flMax = 100.0f;
 	m_flValue = 0.0f;
 	m_szCvarName = NULL;
+	colorBase.SetDefault( uiColorAccent ); // A7: gold progress fill (cs16.css --accent)
 }
 
 void CMenuProgressBar::LinkCvar( const char *cvName, float flMin, float flMax )
@@ -55,11 +56,30 @@ void CMenuProgressBar::Draw( void )
 		flProgress = m_flValue;
 	}
 
-	// draw the background
+	// A7 retheme: secondary background + sunken bevel, accent fill
 	UI_FillRect( m_scPos, m_scSize, uiInputBgColor );
 
-	UI_FillRect( m_scPos.x, m_scPos.y, m_scSize.w * flProgress, m_scSize.h, colorBase );
+	// A7 build 63: the real GameUI loading bar is a row of separated
+	// blocks (resource/UI/CSProgressBar.res: segmentgap) - fill square
+	// cells left to right instead of one solid rect
+	int gap, block, total, filled, i;
+
+	gap = Q_max( 2, m_scSize.h / 8 );
+	block = m_scSize.h + gap;
+	total = ( m_scSize.w + gap ) / block;
+	if( total < 1 ) total = 1;
+	filled = (int)( flProgress * total + 0.5f );
+	if( filled > total ) filled = total;
+
+	for( i = 0; i < filled; i++ )
+	{
+		int bx = m_scPos.x + i * block;
+		int bw = Q_min( block - gap, m_scPos.x + m_scSize.w - bx );
+
+		if( bw > 0 )
+			UI_FillRect( bx, m_scPos.y, bw, m_scSize.h, colorBase );
+	}
 
 	// draw the rectangle
-	UI_DrawRectangle( m_scPos, m_scSize, uiInputFgColor );
+	UI_DrawBevel( m_scPos, m_scSize, true );
 }

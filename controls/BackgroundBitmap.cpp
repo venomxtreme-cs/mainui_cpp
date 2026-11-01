@@ -58,7 +58,8 @@ void CMenuBackgroundBitmap::VidInit()
 		size = Size( ScreenWidth, ScreenHeight );
 	}
 
-	colorBase.SetDefault( 0xFF505050 );
+	// A7: cs16 olive fallback when no background art is available
+	colorBase.SetDefault( uiColorBg );
 
 	CMenuBaseItem::VidInit();
 }
@@ -112,6 +113,13 @@ void CMenuBackgroundBitmap::Draw()
 
 	if( EngFuncs::ClientInGame() )
 	{
+		// build 90: keep the engine's world-behind-menu render on while
+		// the menu is up. Archived configs still carry the old
+		// ui_renderworld "0", so re-assert it here - this draw only
+		// runs while the menu is visible, which is exactly when the
+		// cvar matters (cl_view.c reads it per frame)
+		EngFuncs::CvarSetValue( "ui_renderworld", 1.0f );
+
 		if( EngFuncs::GetCvarFloat( "cl_background" ) )
 		{
 			return;
@@ -119,7 +127,12 @@ void CMenuBackgroundBitmap::Draw()
 
 		if( EngFuncs::GetCvarFloat( "ui_renderworld" ) )
 		{
-			DrawInGameBackground();
+			// build 90: engine renders the live world behind the menu
+			// (cl_view.c honours ui_renderworld). A7 build 91: GoldSource
+			// dims the world behind the pause menu - draw a translucent
+			// black overlay over the live view so the menu reads clearly
+			// (reference: paused game = darkened world + menu)
+			UI_FillRect( 0, 0, gpGlobals->scrWidth, gpGlobals->scrHeight, 0x8F000000 );
 			return;
 		}
 	}
@@ -135,7 +148,7 @@ void CMenuBackgroundBitmap::Draw()
 		UpdatePreference();
 
 		// because the cvar is set by user, tell them if chosen background is not available
-		if( ui_prefer_won_background->value && s_state != DRAW_WON )
+		if( (int)ui_prefer_won_background->value == 1 && s_state != DRAW_WON )
 			UI_ShowMessageBox( L( "WON background is not available" ));
 	}
 
@@ -210,16 +223,6 @@ void CMenuBackgroundBitmap::Draw()
 		DrawBackgroundPiece( s_WONBackground, p, xOffset, yOffset, xScale, yScale );
 	else
 		DrawSteamBackgroundLayout( p, xOffset, yOffset, xScale, yScale );
-
-	// print CS16Client version
-	char version[32];
-	int stringLen, charH;
-
-	snprintf( version, 32, "cs16-client build %s", EngFuncs::GetCvarString( "cscl_ver" ) );
-
-	EngFuncs::engfuncs.pfnDrawConsoleStringLen( version, &stringLen, &charH );
-	EngFuncs::engfuncs.pfnDrawConsoleString( stringLen * 0.05f, ScreenHeight - charH * 1.05f, version );
-
 }
 
 bool CMenuBackgroundBitmap::LoadSteamBackground( bool gamedirOnly )
@@ -316,26 +319,22 @@ bool CMenuBackgroundBitmap::LoadWONBackground( bool gamedirOnly )
 
 void CMenuBackgroundBitmap::UpdatePreference()
 {
-	if( ui_prefer_won_background->value )
+	// A7-full-port: original CS 1.6 menu art is the default - the tiled Steam
+	// collage (resource/BackgroundLayout.txt), else the single WON splash.
+	// value 1 forces the single WON splash specifically (stock behaviour).
+	// Flat olive (cs16.css look) is only the last-resort fallback when no
+	// background art exists at all - an archived stale value can no longer
+	// pin the menu to the flat colour while the collage is available.
+	int pref = (int)ui_prefer_won_background->value;
+
+	if( pref == 1 )
 	{
-		if( s_bGameHasWONBackground )
-			s_state = DRAW_WON;
-		else if( s_bGameHasSteamBackground )
-			s_state = DRAW_STEAM;
-		else if( s_WONBackground.hImage )
-			s_state = DRAW_WON;
-		else if( s_SteamBackground.Count() > 0 )
-			s_state = DRAW_STEAM;
-		else
-			s_state = DRAW_COLOR;
+		s_state = s_WONBackground.hImage ? DRAW_WON : DRAW_COLOR;
 	}
 	else
 	{
-		if( s_bGameHasSteamBackground )
-			s_state = DRAW_STEAM;
-		else if( s_bGameHasWONBackground )
-			s_state = DRAW_WON;
-		else if( s_SteamBackground.Count() > 0 )
+		// default: original CS 1.6 background (tiled collage)
+		if( s_bGameHasSteamBackground || s_SteamBackground.Count() > 0 )
 			s_state = DRAW_STEAM;
 		else if( s_WONBackground.hImage )
 			s_state = DRAW_WON;

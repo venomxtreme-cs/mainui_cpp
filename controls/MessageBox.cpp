@@ -36,8 +36,9 @@ void CMenuMessageBox::_Init()
 
 void CMenuMessageBox::Draw()
 {
-	EngFuncs::FillRGBA( m_scPos.x, m_scPos.y, m_scSize.w, m_scSize.h, 20, 20, 20, 235 );
-	UI_DrawRectangle( m_scPos, m_scSize, uiInputFgColor );
+	// A7 retheme: olive panel + raised bevel (cs16.css dialog)
+	EngFuncs::FillRGBA( m_scPos.x, m_scPos.y, m_scSize.w, m_scSize.h, 74, 89, 66, 245 );
+	UI_DrawBevel( m_scPos, m_scSize, false );
 	BaseClass::Draw();
 }
 

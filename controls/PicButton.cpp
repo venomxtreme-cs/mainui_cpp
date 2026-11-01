@@ -115,6 +115,8 @@ CMenuPicButton::CMenuPicButton() : BaseClass()
 	iOldState = BUTTON_NOFOCUS;
 	m_iLastFocusTime = -512;
 	bPulse = false;
+	m_iTextHeightOverride = -1;
+	m_bCustomTextStyle = false;
 
 	size = uiStatic.buttons_draw_size;
 
@@ -210,6 +212,23 @@ bool CMenuPicButton::KeyDown( int key )
 
 /*
 =================
+A7: is this item inside a floating dialog window? Dialog action buttons
+(OK/Cancel/Apply, Join game/Refresh/Done...) draw with button chrome; the
+non-float main menu keeps its flat text list.
+=================
+*/
+static bool UI_ItemInFloatDialog( const CMenuBaseItem *item )
+{
+	CMenuItemsHolder *p = item->Parent();
+
+	while( p && !p->IsWindow() )
+		p = p->Parent();
+
+	return p && p->IsWindow() && ((CMenuBaseWindow*)p)->IsFloatDialog();
+}
+
+/*
+=================
 CMenuPicButton::DrawButton
 =================
 */
@@ -224,6 +243,23 @@ void CMenuPicButton::DrawButton( int r, int g, int b, int a, wrect_t *rects, int
 CMenuPicButton::Draw
 =================
 */
+// A7 build 62: with QMF_NOTIFY the status text is drawn to the right of
+// the button at a fixed anchor - a frame wrapped around the declared rect
+// cut it off (the touch hub's description column hung outside the panel).
+// Console-font width is estimated from the character height.
+int CMenuPicButton::GetVisualWidth( void ) const
+{
+	if( !szStatusText || !FBitSet( iFlags, QMF_NOTIFY ) ||
+		FBitSet( gMenu.m_gameinfo.flags, GFL_NOSKILLS ))
+		return size.w;
+
+	int w = (int)( uiStatic.buttons_draw_size.w + 40 );
+	w += (int)( strlen( szStatusText ) * EngFuncs::ConsoleCharacterHeight() * 0.6f /
+		( uiStatic.scaleX > 0.01f ? uiStatic.scaleX : 1.0f ));
+
+	return Q_max( w, size.w );
+}
+
 void CMenuPicButton::Draw( )
 {
 	int state = BUTTON_NOFOCUS;
@@ -255,6 +291,37 @@ void CMenuPicButton::Draw( )
 	}
 
 	int a = (512 - (uiStatic.realTime - m_iLastFocusTime)) >> 1;
+
+	// A7 button style: dialogs' action buttons must look like buttons -
+	// cs16.css/GameUI sunken fill with bevel edges (hover = accent edge,
+	// press = sunken) instead of the bare flat text the main menu uses.
+	bool bChrome = !hPic && UI_ItemInFloatDialog( this );
+
+	if( bChrome )
+	{
+		eTextAlignment = QM_CENTER; // dialog buttons center their labels
+
+		bool bGrayed = ( iFlags & QMF_GRAYED ) != 0;
+		unsigned int light = uiColorBorderLight;
+		unsigned int dark  = uiColorBorderDark;
+
+		if( state == BUTTON_FOCUS && !bGrayed )
+			light = uiColorAccent; // hover edge, same as the checkbox
+
+		UI_FillRect( m_scPos, m_scSize, bGrayed ? uiColorBlack : uiInputBgColor );
+
+		if( m_bPressed )
+		{
+			// sunken while pressed
+			UI_DrawRectangleExt( m_scPos, m_scSize, dark,  0, QM_TOP | QM_LEFT );
+			UI_DrawRectangleExt( m_scPos, m_scSize, light, 0, QM_BOTTOM | QM_RIGHT );
+		}
+		else
+		{
+			UI_DrawRectangleExt( m_scPos, m_scSize, light, 0, QM_TOP | QM_LEFT );
+			UI_DrawRectangleExt( m_scPos, m_scSize, dark,  0, QM_BOTTOM | QM_RIGHT );
+		}
+	}
 
 	if( hPic && !uiStatic.renderPicbuttonText )
 	{
@@ -308,73 +375,66 @@ void CMenuPicButton::Draw( )
 			DrawButton( r, g, b, 255, rects, state );
 		}
 	}
-	else if( !uiStatic.lowmemory )
+	else if( m_bCustomTextStyle )
 	{
-		const uint heavy_blur_flags = ETF_NOSIZELIMIT | ETF_FORCECOL;
-		const uint light_blur_flags = ETF_NOSIZELIMIT | ETF_FORCECOL | ETF_ADDITIVE;
-		CColor light_blur_color, heavy_blur_color = colorBase;
-		Point pos = m_scPos;
+		// build 90: ETF_NO_WRAP - a menu item must never break onto a
+		// second line ("stucked"/half-word rows in the user's screenshot)
+		uint textflags = ETF_NOSIZELIMIT | ETF_FORCECOL | ETF_NO_WRAP;
+		const int buttonTextHeight = ( m_iTextHeightOverride > 0 ) ? m_iTextHeightOverride : m_scChSize;
 
-		if( iFlags & QMF_GRAYED )
-			light_blur_color = InterpColor( uiColorBlack, colorBase, 0.333f ); // because additive, tone down all channels
-		else
-			light_blur_color = colorBase;
-
-		pos.x += 7 * uiStatic.scaleX;
-		pos.y -= uiStatic.scaleY;
-
-		if( this != m_pParent->ItemAtCursor() )
-		{
-			if( a > 0 )
-			{
-				UI_DrawString( uiStatic.hHeavyBlur, pos, m_scSize, szName,
-					PackAlpha( heavy_blur_color, a ), m_scChSize, eTextAlignment, heavy_blur_flags );
-			}
-			UI_DrawString( uiStatic.hLightBlur, pos, m_scSize, szName, light_blur_color, m_scChSize, eTextAlignment, light_blur_flags );
-		}
-		else if( m_bPressed )
-		{
-			UI_DrawString( uiStatic.hHeavyBlur, pos, m_scSize, szName, heavy_blur_color, m_scChSize, eTextAlignment, heavy_blur_flags );
-			UI_DrawString( uiStatic.hLightBlur, pos, m_scSize, szName, 0xFF000000, m_scChSize, eTextAlignment, light_blur_flags & ( ~ETF_ADDITIVE ));
-		}
-		else if( eFocusAnimation == QM_HIGHLIGHTIFFOCUS )
-		{
-			UI_DrawString( uiStatic.hHeavyBlur, pos, m_scSize, szName, heavy_blur_color, m_scChSize, eTextAlignment, heavy_blur_flags );
-			UI_DrawString( uiStatic.hLightBlur, pos, m_scSize, szName, light_blur_color, m_scChSize, eTextAlignment, light_blur_flags );
-		}
-		else if( eFocusAnimation == QM_PULSEIFFOCUS )
-		{
-			float pulsar = 0.5f + 0.5f * sin( (float)uiStatic.realTime / UI_PULSE_DIVISOR );
-
-			UI_DrawString( uiStatic.hHeavyBlur, pos, m_scSize, szName,
-				InterpColor( uiColorBlack, heavy_blur_color, pulsar ), m_scChSize, eTextAlignment, heavy_blur_flags );
-			UI_DrawString( uiStatic.hLightBlur, pos, m_scSize, szName, light_blur_color, m_scChSize, eTextAlignment, light_blur_flags );
-		}
-	}
-	else
-	{
-		uint textflags = ETF_NOSIZELIMIT | ETF_FORCECOL;
-
-		SetBits( textflags, (iFlags & QMF_DROPSHADOW) ? ETF_SHADOW : 0 );
+		SetBits( textflags, ( iFlags & QMF_DROPSHADOW ) ? ETF_SHADOW : 0 );
 
 		if( iFlags & QMF_GRAYED )
 		{
-			UI_DrawString( font, m_scPos, m_scSize, szName, uiColorDkGrey, m_scChSize, eTextAlignment, textflags );
+			UI_DrawString( font, m_scPos, m_scSize, szName, uiColorDkGrey, buttonTextHeight, eTextAlignment, textflags );
 		}
 		else if( this != m_pParent->ItemAtCursor() )
 		{
-			UI_DrawString( font, m_scPos, m_scSize, szName, colorBase, m_scChSize, eTextAlignment, textflags );
+			UI_DrawString( font, m_scPos, m_scSize, szName, colorBase, buttonTextHeight, eTextAlignment, textflags );
 		}
 		else if( eFocusAnimation == QM_HIGHLIGHTIFFOCUS )
 		{
-			UI_DrawString( font, m_scPos, m_scSize, szName, colorFocus, m_scChSize, eTextAlignment, textflags );
+			UI_DrawString( font, m_scPos, m_scSize, szName, colorFocus, buttonTextHeight, eTextAlignment, textflags );
 		}
 		else if( eFocusAnimation == QM_PULSEIFFOCUS )
 		{
 			float pulsar = 0.5f + 0.5f * sin( (float)uiStatic.realTime / UI_PULSE_DIVISOR );
 
 			UI_DrawString( font, m_scPos, m_scSize, szName,
-				InterpColor( colorBase, colorFocus, pulsar ), m_scChSize, eTextAlignment, textflags );
+				InterpColor( colorBase, colorFocus, pulsar ), buttonTextHeight, eTextAlignment, textflags );
+		}
+	}
+	else
+	{
+		// A7: flat GoldSrc-style button text with hard drop shadow.
+		// The xash3d additive blur-glow text (hHeavyBlur/hLightBlur) that used
+		// to draw here is what made every subpage read as a stock xash port;
+		// original CS 1.6 menu text is flat white with a black shadow. Works
+		// for pressed/grayed/pulse states too (focus uses colorFocus above).
+		(void)a; // only the picture path uses the focus-decay alpha
+		uint textflags = ETF_NOSIZELIMIT | ETF_FORCECOL;
+		const int buttonTextHeight = ( m_iTextHeightOverride > 0 ) ? m_iTextHeightOverride : m_scChSize;
+
+		SetBits( textflags, (iFlags & QMF_DROPSHADOW) ? ETF_SHADOW : 0 );
+
+		if( iFlags & QMF_GRAYED )
+		{
+			UI_DrawString( font, m_scPos, m_scSize, szName, uiColorDkGrey, buttonTextHeight, eTextAlignment, textflags );
+		}
+		else if( this != m_pParent->ItemAtCursor() )
+		{
+			UI_DrawString( font, m_scPos, m_scSize, szName, colorBase, buttonTextHeight, eTextAlignment, textflags );
+		}
+		else if( eFocusAnimation == QM_HIGHLIGHTIFFOCUS )
+		{
+			UI_DrawString( font, m_scPos, m_scSize, szName, colorFocus, buttonTextHeight, eTextAlignment, textflags );
+		}
+		else if( eFocusAnimation == QM_PULSEIFFOCUS )
+		{
+			float pulsar = 0.5f + 0.5f * sin( (float)uiStatic.realTime / UI_PULSE_DIVISOR );
+
+			UI_DrawString( font, m_scPos, m_scSize, szName,
+				InterpColor( colorBase, colorFocus, pulsar ), buttonTextHeight, eTextAlignment, textflags );
 		}
 	}
 

@@ -20,7 +20,6 @@ GNU General Public License for more details.
 #include "Utils.h"
 #include "Scissor.h"
 
-#define HEADER_HEIGHT_FRAC 1.75f
 
 CMenuTable::CMenuTable() : BaseClass(),
 	bFramedHintText( false ),
@@ -47,7 +46,7 @@ void CMenuTable::VidInit()
 {
 	BaseClass::VidInit();
 
-	iBackgroundColor.SetDefault( uiColorBlack );
+	iBackgroundColor.SetDefault( uiColorSecondaryBg ); // A7: cs16 secondary bg
 	iHeaderColor.SetDefault( uiColorHelp );
 	colorStroke.SetDefault( uiInputFgColor );
 	iStrokeFocusedColor.SetDefault( uiInputTextColor );
@@ -109,6 +108,47 @@ void CMenuTable::VidInit()
 	headerSize.w = m_scSize.w - arrow.w + iStrokeWidth;
 
 	// box is lower than header
+	boxPos.x = m_scPos.x;
+	boxPos.y = m_scPos.y + headerSize.h;
+	boxSize.w = headerSize.w;
+	boxSize.h = m_scSize.h - headerSize.h;
+}
+
+// A7 build 62: box/arrow/header geometry is derived from the RENDER
+// position - the float layout (and dragging) move m_scPos AFTER VidInit,
+// so caching this only in VidInit drew the table panel at the pre-shift
+// place (the Create Game map list hung outside the frame; the Touch
+// Options presets list collided with the Delete button). Recompute on
+// every CalcSizes, which both VidInit and RecalcRenderTree call.
+// Idempotent: the arrow size is reset to 24 before each Scale().
+void CMenuTable::CalcSizes( void )
+{
+	BaseClass::CalcSizes();
+
+	iStrokeWidth = uiStatic.outlineWidth;
+
+	// header height
+	headerSize.h = m_scChSize * HEADER_HEIGHT_FRAC;
+
+	// arrow position and sizes
+	if( bShowScrollBar )
+		arrow.w = arrow.h = 24;
+	else
+		arrow.w = arrow.h = 0;
+	arrow = arrow.Scale();
+
+	downArrow.x = upArrow.x = m_scPos.x + m_scSize.w - arrow.w + iStrokeWidth * 1;
+	upArrow.y = m_scPos.y - iStrokeWidth;
+	downArrow.y = upArrow.y + m_scSize.h - arrow.h + iStrokeWidth * 2;
+	if( !bFramedHintText )
+	{
+		upArrow.y += headerSize.h;
+	}
+
+	// header size (position is the table position)
+	headerSize.w = m_scSize.w - arrow.w + iStrokeWidth;
+
+	// box is lower than the header
 	boxPos.x = m_scPos.x;
 	boxPos.y = m_scPos.y + headerSize.h;
 	boxSize.w = headerSize.w;
@@ -177,6 +217,32 @@ bool CMenuTable::MouseMove( int x, int y )
 	iTopItem = bound( 0, iTopItem, m_pModel->GetRows() - iNumRows );
 
 	return true;
+}
+
+int CMenuTable::CalcVisibleRowCount( int startItem ) const
+{
+	if( !m_pModel || m_pModel->GetRows() <= 0 )
+		return 0;
+
+	startItem = bound( 0, startItem, m_pModel->GetRows() - 1 );
+
+	int count = 0;
+	int y = boxPos.y;
+
+	const int bottom = boxPos.y + boxSize.h;
+
+	for( int i = startItem; i < m_pModel->GetRows(); i++ )
+	{
+		const int rowHeight = m_pModel->GetRowHeight( i, m_scChSize );
+
+		if( y + rowHeight > bottom )
+			break;
+
+		y += rowHeight;
+		count++;
+	}
+
+	return count;
 }
 
 bool CMenuTable::MoveView(int delta )
@@ -463,26 +529,14 @@ void CMenuTable::DrawLine( Point p, const char **psz, size_t size, uint textColo
 
 		if( bAllowSorting && i == GetSortingColumn() )
 		{
-			HIMAGE hPic;
-
-			if( IsAscend() )
-				hPic = EngFuncs::PIC_Load( UI_ASCEND );
-			else hPic = EngFuncs::PIC_Load( UI_DESCEND );
-
-			if( hPic )
-			{
-				Point picPos = pt;
-				Size picSize = EngFuncs::PIC_Size( hPic ) * uiStatic.scaleX;
-
-				picPos.y += g_FontMgr->GetFontAscent( font );
-
-				if( IsAscend() )
-					picPos.y -= picSize.h;
-
-				EngFuncs::PIC_Set( hPic, 255, 255, 255 );
-				EngFuncs::PIC_DrawAdditive( picPos, picSize );
-				pt.x += picSize.w;
-			}
+			// A7-full-port: drawn sort caret instead of the gfx/shell up/down
+			// art (that art ships in the APK extras and looks xash3d)
+			Size tri;
+			tri.w = tri.h = Q_max( 6, (int)( sz.h * 0.4f ) );
+			Point triPos;
+			triPos.x = pt.x + sz.w - tri.w - (int)( 4 * uiStatic.scaleX );
+			triPos.y = pt.y + ( sz.h - tri.h ) / 2;
+			UI_DrawTriangle( triPos, tri, IsAscend() != 0, textColor );
 		}
 
 		UI_DrawString( font, pt, sz, psz[i], textColor, m_scChSize,
@@ -490,12 +544,13 @@ void CMenuTable::DrawLine( Point p, const char **psz, size_t size, uint textColo
 	}
 }
 
-void CMenuTable::DrawLine( Point p, int line, uint textColor, bool forceCol, uint fillColor )
+void CMenuTable::DrawLine( Point p, int line, uint textColor, bool forceCol, uint fillColor, uint rowHeight )
 {
 	int i;
 	Size sz;
 
-	sz.h = m_scChSize;
+	sz.h = rowHeight;
+	int contentOffsetY = ( rowHeight - m_scChSize ) / 2;
 
 	unsigned int newFillColor;
 	bool forceFillColor = false;
@@ -542,9 +597,26 @@ void CMenuTable::DrawLine( Point p, int line, uint textColor, bool forceCol, uin
 		switch( type )
 		{
 		case CELL_TEXT:
-			UI_DrawString( font, p, sz, str, textColor, m_scChSize, m_pModel->GetAlignmentForColumn( i ),
-				textflags | ( m_pModel->IsCellTextWrapped( line, i ) ? 0 : ETF_NOSIZELIMIT ) );
+		{
+			Point contentPos = p;
+			contentPos.y += contentOffsetY;
+
+			Size contentSize = sz;
+			contentSize.h = m_scChSize;
+
+			UI_DrawString(
+				font,
+				contentPos,
+				contentSize,
+				str,
+				textColor,
+				m_scChSize,
+				m_pModel->GetAlignmentForColumn( i ),
+				textflags | ( m_pModel->IsCellTextWrapped( line, i ) ? 0 : ETF_NOSIZELIMIT )
+			);
+
 			break;
+		}
 		case CELL_IMAGE_ADDITIVE:
 		case CELL_IMAGE_DEFAULT:
 		case CELL_IMAGE_HOLES:
@@ -556,8 +628,15 @@ void CMenuTable::DrawLine( Point p, int line, uint textColor, bool forceCol, uin
 				continue;
 
 			Point picPos = p;
+			picPos.y += ( rowHeight - m_scChSize ) / 2;
 			Size picSize = EngFuncs::PIC_Size( pic );
 			float scale = (float)m_scChSize/(float)picSize.h;
+
+			// A7 build 111: aspect-fit into the column as well - a wide
+			// picture scaled by height alone ran past the cell edge into
+			// the next column's text
+			if( picSize.w > 0 && picSize.w * scale > (float)sz.w )
+				scale = (float)sz.w / (float)picSize.w;
 
 			picSize = picSize * scale;
 
@@ -598,24 +677,109 @@ void CMenuTable::DrawLine( Point p, int line, uint textColor, bool forceCol, uin
 
 			break;
 		}
+		case CELL_IMAGE_ROWSCALED:
+		{
+			// Like CELL_IMAGE_TRANS, this draws with transparency, but scales to the row's height
+			// (rowHeight, as computed by the model's GetRowHeight())
+			// rather than to the text char height (m_scChSize). This
+			// is what lets a model grow avatar-style cells purely by
+			// varying row height -- e.g. based on how many rows need
+			// to fit -- without needing a larger font for the whole
+			// row just to get a bigger image.
+			HIMAGE pic = EngFuncs::PIC_Load( str );
+
+			if( !pic )
+				continue;
+
+			Size picSize = EngFuncs::PIC_Size( pic );
+
+			// Small fixed margin so the avatar doesn't touch the row's
+			// top/bottom edge even when rowHeight == picSize after scale.
+			int avatarMargin = Q_max( 0, (int)( 2 * uiStatic.scaleY ));
+			int targetHeight = Q_max( 1, (int)rowHeight - avatarMargin * 2 );
+
+			// Never let the (assumed square-ish) avatar grow wider than
+			// its own column -- callers size columns independently of
+			// row height, so this is the one place that can enforce it
+			// regardless of what the caller's column width happens to be.
+			targetHeight = Q_min( targetHeight, (int)sz.w );
+
+			// A7 build 111: aspect-FIT, not height-only - a wide/tall
+			// logo scaled purely by height overflowed the avatar column
+			// and overlapped the name text ("sometime in score board
+			// size not looking good, so fix it"). Both axes now stay
+			// inside the cell; the picture keeps its real aspect.
+			float scale = (float)targetHeight / (float)picSize.h;
+			if( picSize.w > 0 && picSize.w * scale > (float)sz.w )
+				scale = (float)sz.w / (float)picSize.w;
+			picSize = picSize * scale;
+
+			Point picPos = p;
+			picPos.y += ( rowHeight - picSize.h ) / 2;
+
+			switch( m_pModel->GetAlignmentForColumn( i ) )
+			{
+			case QM_RIGHT: picPos.x += ( sz.w - picSize.w ); break;
+			case QM_CENTER: picPos.x += ( sz.w - picSize.w ) / 2; break;
+			default: break;
+			}
+
+			if( useCustomColors )
+			{
+				int r, g, b, a;
+				UnpackRGBA( r, g, b, a, newFillColor );
+				EngFuncs::PIC_Set( pic, r, g, b, a );
+			}
+			else
+			{
+				EngFuncs::PIC_Set( pic, 255, 255, 255 );
+			}
+
+			// Row-scaled images use the same transparent draw mode as CELL_IMAGE_TRANS.
+			EngFuncs::PIC_DrawTrans( picPos, picSize );
+
+			break;
+		}
 		}
 	}
+}
+
+/*
+=================
+TableDrawScrollArrow
+
+A7-full-port: always draw the triangle. The gfx/shell arrow art does ship
+in the APK extras, so the "use art when present" path kept rendering the
+xash3d arrows (user report: "other menus still look xash3d style extras
+bmp image"). The drawn triangle matches the rest of the rethemed UI.
+=================
+*/
+static void TableDrawScrollArrow( Point pos, Size size, bool bUp, unsigned int color, CImage &pic )
+{
+	(void)pic;
+	UI_DrawTriangle( pos, size, bUp, color );
 }
 
 void CMenuTable::Draw()
 {
 	int i, y;
-	int selColor = PackRGB( 80, 56, 24 );
+	// A7: cs16 gold-olive selection fill (accent blended over secondary bg)
+	int selColor = PackRGB( 115, 114, 65 );
 	int upFocus, downFocus, scrollbarFocus;
 
-	// HACKHACK: recalc iNumRows, to be not greater than iNumItems
-	iNumRows = ( m_scSize.h - iStrokeWidth * 2 ) / m_scChSize - 1;
-	if( iNumRows > m_pModel->GetRows() )
-		iNumRows = m_pModel->GetRows();
-
-	// HACKHACK: normalize iTopItem
-	// remove when there will be per-pixel scrolling
-	iTopItem = bound( 0, iTopItem, m_pModel->GetRows() - 1 );
+	// Calculate the actual number of rows that fit in the table.
+	// Rows may have different heights, so using boxHeight / m_scChSize
+	// is not valid here. (scoreboard port)
+	if( m_pModel->GetRows() > 0 )
+	{
+		iTopItem = bound( 0, iTopItem, m_pModel->GetRows() - 1 );
+		iNumRows = CalcVisibleRowCount( iTopItem );
+	}
+	else
+	{
+		iTopItem = 0;
+		iNumRows = 0;
+	}
 
 	if( UI_CursorInRect( boxPos, boxSize ) )
 	{
@@ -691,15 +855,15 @@ void CMenuTable::Draw()
 	if( iScrollBarSliding )
 	{
 		// Draw scrollbar background
-		UI_FillRect( sbarPos.x, upArrow.y + arrow.h, sbarSize.w, downArrow.y - upArrow.y - arrow.h, uiColorBlack);
+		UI_FillRect( sbarPos.x, upArrow.y + arrow.h, sbarSize.w, downArrow.y - upArrow.y - arrow.h, uiColorBorderDark);
 	}
 
 	// ADAMIX END
 	// draw the arrows
 	if( iFlags & QMF_GRAYED )
 	{
-		UI_DrawPic( upArrow, arrow, uiColorDkGrey, szUpArrow );
-		UI_DrawPic( downArrow, arrow, uiColorDkGrey, szDownArrow );
+		TableDrawScrollArrow( upArrow, arrow, true,  uiColorDkGrey, szUpArrow );
+		TableDrawScrollArrow( downArrow, arrow, false, uiColorDkGrey, szDownArrow );
 	}
 	else
 	{
@@ -708,13 +872,13 @@ void CMenuTable::Draw()
 		// special case if we sliding but lost focus
 		if( iScrollBarSliding ) scrollbarFocus = true;
 
-		// Draw scrollbar itself
-		UI_FillRect( sbarPos, sbarSize, scrollbarFocus ? uiInputTextColor : uiColorBlack );
+		// Draw scrollbar itself (A7: light thumb, accent while focused)
+		UI_FillRect( sbarPos, sbarSize, scrollbarFocus ? uiColorAccent : uiColorBorderLight );
 
 		if(this != m_pParent->ItemAtCursor())
 		{
-			UI_DrawPic( upArrow, arrow, uiColorWhite, szUpArrow );
-			UI_DrawPic( downArrow, arrow, uiColorWhite, szDownArrow );
+			TableDrawScrollArrow( upArrow, arrow, true,  uiColorWhite, szUpArrow );
+			TableDrawScrollArrow( downArrow, arrow, false, uiColorWhite, szDownArrow );
 		}
 		else
 		{
@@ -722,10 +886,16 @@ void CMenuTable::Draw()
 			upFocus = UI_CursorInRect( upArrow, arrow );
 			downFocus = UI_CursorInRect( downArrow, arrow );
 
+			// special case if we sliding but lost focus
+			if( iScrollBarSliding )
+			{
+				upFocus = downFocus = false;
+			}
+
 			if( eFocusAnimation == QM_HIGHLIGHTIFFOCUS )
 			{
-				UI_DrawPic( upArrow, arrow, uiColorWhite, (upFocus) ? szUpArrowFocus : szUpArrow );
-				UI_DrawPic( downArrow, arrow, uiColorWhite, (downFocus) ? szDownArrowFocus : szDownArrow );
+				TableDrawScrollArrow( upArrow, arrow, true,  upFocus   ? uiColorAccent : uiColorWhite, upFocus   ? szUpArrowFocus : szUpArrow );
+				TableDrawScrollArrow( downArrow, arrow, false, downFocus ? uiColorAccent : uiColorWhite, downFocus ? szDownArrowFocus : szDownArrow );
 			}
 			else if( eFocusAnimation == QM_PULSEIFFOCUS )
 			{
@@ -733,8 +903,8 @@ void CMenuTable::Draw()
 
 				color = PackAlpha( colorBase, 255 * (0.5f + 0.5f * sin( (float)uiStatic.realTime / UI_PULSE_DIVISOR )));
 
-				UI_DrawPic( upArrow, arrow, (upFocus) ? color : (int)colorBase, (upFocus) ? szUpArrowFocus : szUpArrow );
-				UI_DrawPic( downArrow, arrow, (downFocus) ? color : (int)colorBase, (downFocus) ? szDownArrowFocus : szDownArrow );
+				TableDrawScrollArrow( upArrow, arrow, true,  upFocus   ? color : (int)colorBase, upFocus   ? szUpArrowFocus : szUpArrow );
+				TableDrawScrollArrow( downArrow, arrow, false, downFocus ? color : (int)colorBase, downFocus ? szDownArrowFocus : szDownArrow );
 			}
 		}
 	}
@@ -744,8 +914,13 @@ void CMenuTable::Draw()
 	UI::Scissor::PushScissor( boxPos, boxSize );
 	y = boxPos.y;
 
-	for( i = iTopItem; i < m_pModel->GetRows() && i < iNumRows + iTopItem; i++, y += m_scChSize )
+	for( i = iTopItem; i < m_pModel->GetRows(); i++ )
 	{
+		int rowHeight = m_pModel->GetRowHeight( i, m_scChSize );
+
+		if( y + rowHeight > boxPos.y + boxSize.h )
+			break;
+
 		int color = colorBase; // predict state
 		bool forceCol = false;
 		int fillColor = 0;
@@ -759,20 +934,17 @@ void CMenuTable::Draw()
 		{
 			if( i == iCurItem )
 			{
-				if( eFocusAnimation == QM_HIGHLIGHTIFFOCUS )
-					color = colorFocus;
-				else if( eFocusAnimation == QM_PULSEIFFOCUS )
-					color = PackAlpha( colorBase, 255 * (0.5f + 0.5f * sin( (float)uiStatic.realTime / UI_PULSE_DIVISOR )));
-
+				// A7: keep row text readable on the selection fill
 				fillColor = selColor;
 			}
 			else if( i == iHighlight )
 			{
-				fillColor = 0x80383838;
+				fillColor = 0x604A5942; // A7: hover tint (panel color)
 			}
 		}
 
-		DrawLine( Point( boxPos.x, y ), i, color, forceCol, fillColor );
+		DrawLine( Point( boxPos.x, y ), i, color, forceCol, fillColor, rowHeight );
+		y += rowHeight;
 	}
 
 	UI::Scissor::PopScissor();

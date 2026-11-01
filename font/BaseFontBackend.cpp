@@ -20,7 +20,7 @@ GNU General Public License for more details.
 
 CBaseFont::CBaseFont()
 	: m_iTall(), m_iWeight(), m_iFlags(),
-	m_iHeight(), m_iMaxCharWidth(), m_iAscent(),
+	m_iHeight(), m_iMaxCharWidth(), m_iRequestTall(), m_iAscent(),
 	m_iBlur(), m_fBrighten(),
 	m_iEllipsisWide( 0 ),
 	m_glyphs(0, 0), m_ABCCache( 0, 0 )
@@ -179,8 +179,10 @@ void CBaseFont::UploadGlyphsForRanges(charRange_t *range, int rangeSize)
 			rect.right  = xstart + drawSize.w;
 
 			// copy glyph to rgbdata
-
-			for( int y = 0; y < height - 1; y++ )
+			// build 90: copy the COMPLETE glyph box - the old height-1 loop
+			// dropped the last row of every rect, which shaved a pixel row
+			// off descenders (g, y, p) and made small labels look nicked
+			for( int y = 0; y < height; y++ )
 			{
 				byte *dst = &rgbdata[(ystart - y) * hdr->width * 4];
 				byte *src = &temp[y * maxWidth * 4];
@@ -259,12 +261,15 @@ void CBaseFont::GetCharABCWidths( int ch, int &a, int &b, int &c )
 	m_ABCCache.Insert( find );
 }
 
+// build 90: compare the identity the builder requested - i.e. the *device*
+// height the label line is laid out with - so fonts rendered for one uiScale
+// never collide with another scale's entry in the (shared) font cache
 bool CBaseFont::IsEqualTo(const char *name, int tall, int weight, int blur, int flags)  const
 {
 	if( stricmp( name, m_szName ))
 		return false;
 
-	if( m_iTall != tall )
+	if( m_iRequestTall != tall )
 		return false;
 
 	if( m_iWeight != weight )
@@ -489,7 +494,10 @@ int CBaseFont::DrawCharacter(int ch, Point pt, int charH, const unsigned int col
 	int a, b, c, width;
 
 #ifdef SCALE_FONTS
-	float factor = (float)charH / (float)GetTall();
+	// build 90: scale against the height the builder requested (device px),
+	// not the backend's padded line box - otherwise WinAPI fonts are
+	// resampled by headroom/line ratio instead of drawn 1:1
+	float factor = (float)charH / (float)( m_iRequestTall > 0 ? m_iRequestTall : m_iTall );
 #endif
 
 	GetCharABCWidths( ch, a, b, c );

@@ -448,7 +448,7 @@ void CMenuXhair::CMenuCrosshairPreview::Draw()
 	}
 
 	int textHeight = m_scPos.y - ( m_scChSize * 1.5f );
-	UI_DrawString( font, m_scPos.x, textHeight, m_scSize.w, m_scChSize, szName, uiColorHelp, m_scChSize, QM_LEFT, ETF_SHADOW | ETF_NOSIZELIMIT | ETF_FORCECOL );
+	UI_DrawString( font, m_scPos.x, textHeight, m_scSize.w, m_scChSize, szName, uiColorText, m_scChSize, QM_LEFT, ETF_SHADOW | ETF_NOSIZELIMIT | ETF_FORCECOL );
 
 	/* draw padding if wanted */
 	if ( parent->pad.GetCurrentValue() )
@@ -571,7 +571,7 @@ void CMenuClassicCrosshair::CMenuCrosshairPreview::Draw()
 	}
 
 	int textHeight = m_scPos.y - ( m_scChSize * 1.5f );
-	UI_DrawString( font, m_scPos.x, textHeight, m_scSize.w, m_scChSize, szName, uiColorHelp, m_scChSize, QM_LEFT, ETF_SHADOW | ETF_NOSIZELIMIT | ETF_FORCECOL );
+	UI_DrawString( font, m_scPos.x, textHeight, m_scSize.w, m_scChSize, szName, uiColorText, m_scChSize, QM_LEFT, ETF_SHADOW | ETF_NOSIZELIMIT | ETF_FORCECOL );
 
 	// draw the rectangle
 	if ( eFocusAnimation == QM_HIGHLIGHTIFFOCUS && IsCurrentSelected() )

@@ -46,6 +46,18 @@ public:
 	virtual Point GetPositionOffset() const;
 	virtual bool IsWindow() { return false; }
 
+	// A7 floating dialogs: recalculate children render positions too - 
+	// they compose this holder's render offset in CalcPosition
+	void RecalcRenderTree( void ) override;
+
+	// A7 build 58: fit-to-screen scaling walks into pages/holders too
+	void ScaleLayout( float k ) override
+	{
+		BaseClass::ScaleLayout( k );
+		FOR_EACH_VEC( m_pItems, i )
+			m_pItems[i]->ScaleLayout( k );
+	}
+
 	void CursorMoved( void );
 	void SetCursor( int newCursor, bool notify = true );
 	void SetCursorToItem( CMenuBaseItem &item, bool notify = true );

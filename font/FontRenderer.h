@@ -15,7 +15,10 @@ enum EFontFlags
 #define UI_CONSOLE_CHAR_HEIGHT  18
 
 #define UI_SMALL_CHAR_WIDTH		10
-#define UI_SMALL_CHAR_HEIGHT	20
+// A7 build 105 (user: options/Game Settings fonts "still too big - like
+// main menu rows (16 px)"): label sizes drop to the main menu's 16 px so
+// every dialog reads like the New game / Options rows
+#define UI_SMALL_CHAR_HEIGHT	16
 
 #define UI_SMALLER_CHAR_WIDTH	8
 #define UI_SMALLER_CHAR_HEIGHT	16
@@ -24,10 +27,10 @@ enum EFontFlags
 #define UI_TINY_CHAR_HEIGHT		12
 
 #define UI_MED_CHAR_WIDTH		13
-#define UI_MED_CHAR_HEIGHT		26
+#define UI_MED_CHAR_HEIGHT		16 // build 105: was 26 - options labels now match the main menu rows
 
 #define UI_BIG_CHAR_WIDTH		20
-#define UI_BIG_CHAR_HEIGHT		40
+#define UI_BIG_CHAR_HEIGHT		24 // build 105: dialog titles scale down with the labels (was 40)
 
 enum EFontSizes
 {

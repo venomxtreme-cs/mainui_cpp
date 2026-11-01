@@ -13,6 +13,7 @@ MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
 GNU General Public License for more details.
 */
 #include <locale.h>
+#include <math.h>
 #include "FontManager.h"
 #include "BaseMenu.h"
 #include "Utils.h"
@@ -30,7 +31,9 @@ GNU General Public License for more details.
 #include "BitmapFont.h"
 #include "utflib.h"
 
-#define DEFAULT_MENUFONT "Trebuchet MS"
+// A7: Tahoma matches the main menu / console fonts and the original CS 1.6
+// GameUI look; Trebuchet was the stock xash3d menu font
+#define DEFAULT_MENUFONT "Tahoma"
 #define DEFAULT_CONFONT  "Tahoma"
 #define DEFAULT_WEIGHT   500
 
@@ -62,50 +65,65 @@ CFontManager::~CFontManager()
 	m_FontFiles.Purge();
 }
 
+// build 90: design height -> DEVICE (raster) height. Bitmap/GDI/FreeType
+// glyphs are 1:1 pixels, so the raster must equal the line the control lays
+// its label out with (m_scChSize = charSize * uiStatic.scaleY, truncating):
+// any other ratio makes every glyph resample at draw time, which is what
+// turns text soft once uiScale > 1. Same rounding on both sides keeps the
+// raster height, the line height and the ellipsis/width metrics identical.
+static int UI_DeviceFontTall( int tall )
+{
+	if( tall <= 0 || !( uiStatic.scaleY > 0.0f ))
+		return tall;
+
+	return (int)((float)tall * uiStatic.scaleY);
+}
+
 void CFontManager::VidInit( void )
 {
 	static float prevScale = 0;
 
 	float scale = uiStatic.scaleY;
 
-	if( !prevScale
-#ifndef SCALE_FONTS // complete disables font re-rendering
-	|| fabs( scale - prevScale ) > 0.1f
-#endif
-	)
+	// build 90: rebuild on ANY scale change. The old 0.1 delta (and, on
+	// SCALE_FONTS builds, "rebuild once ever") kept rasters from a previous
+	// resolution: drawing them against the new m_scChSize upscales stale
+	// glyphs - the blurry-font complaint after a video mode change. The
+	// heights below stay DESIGN units; CFontBuilder::Create bakes the scale.
+	if( !prevScale || fabs( scale - prevScale ) > 0.01f )
 	{
 		DeleteAllFonts();
-		uiStatic.hDefaultFont = CFontBuilder( DEFAULT_MENUFONT, UI_MED_CHAR_HEIGHT * scale, DEFAULT_WEIGHT )
+		uiStatic.hDefaultFont = CFontBuilder( DEFAULT_MENUFONT, UI_MED_CHAR_HEIGHT, DEFAULT_WEIGHT )
 			.SetHandleNum( QM_DEFAULTFONT )
 			.Create();
-		uiStatic.hSmallFont   = CFontBuilder( DEFAULT_MENUFONT, UI_SMALL_CHAR_HEIGHT * scale, DEFAULT_WEIGHT )
+		uiStatic.hSmallFont   = CFontBuilder( DEFAULT_MENUFONT, UI_SMALL_CHAR_HEIGHT, DEFAULT_WEIGHT )
 			.SetHandleNum( QM_SMALLFONT )
 			.Create();
-		uiStatic.hSmallerFont = CFontBuilder( DEFAULT_MENUFONT, UI_SMALLER_CHAR_HEIGHT * scale, DEFAULT_WEIGHT )
+		uiStatic.hSmallerFont = CFontBuilder( DEFAULT_MENUFONT, UI_SMALLER_CHAR_HEIGHT, DEFAULT_WEIGHT )
 			.SetHandleNum( QM_SMALLERFONT )
 			.Create();
-		uiStatic.hTinyFont    = CFontBuilder( DEFAULT_MENUFONT, UI_TINY_CHAR_HEIGHT * scale, DEFAULT_WEIGHT )
+		uiStatic.hTinyFont    = CFontBuilder( DEFAULT_MENUFONT, UI_TINY_CHAR_HEIGHT, DEFAULT_WEIGHT )
 			.SetHandleNum( QM_TINYFONT )
 			.Create();
-		uiStatic.hBigFont     = CFontBuilder( DEFAULT_MENUFONT, UI_BIG_CHAR_HEIGHT * scale, DEFAULT_WEIGHT )
+		uiStatic.hBigFont     = CFontBuilder( DEFAULT_MENUFONT, UI_BIG_CHAR_HEIGHT, DEFAULT_WEIGHT )
 			.SetHandleNum( QM_BIGFONT )
 			.Create();
-		uiStatic.hBoldFont = CFontBuilder( DEFAULT_MENUFONT, UI_MED_CHAR_HEIGHT * scale, 1000 )
+		uiStatic.hBoldFont = CFontBuilder( DEFAULT_MENUFONT, UI_MED_CHAR_HEIGHT, 1000 )
 			.SetHandleNum( QM_BOLDFONT )
 			.Create();
 
 		if( !uiStatic.lowmemory )
 		{
-			uiStatic.hLightBlur = CFontBuilder( DEFAULT_MENUFONT, UI_MED_CHAR_HEIGHT * scale, DEFAULT_WEIGHT )
+			uiStatic.hLightBlur = CFontBuilder( DEFAULT_MENUFONT, UI_MED_CHAR_HEIGHT, DEFAULT_WEIGHT )
 				.SetBlurParams( 2 * scale, 1.25f )
 				.Create();
 
-			uiStatic.hHeavyBlur = CFontBuilder( DEFAULT_MENUFONT, UI_MED_CHAR_HEIGHT * scale, DEFAULT_WEIGHT )
+			uiStatic.hHeavyBlur = CFontBuilder( DEFAULT_MENUFONT, UI_MED_CHAR_HEIGHT, DEFAULT_WEIGHT )
 				.SetBlurParams( 8 * scale, 2.0f )
 				.Create();
 		}
 
-		uiStatic.hConsoleFont = CFontBuilder( DEFAULT_CONFONT, UI_CONSOLE_CHAR_HEIGHT * scale, 500 )
+		uiStatic.hConsoleFont = CFontBuilder( DEFAULT_CONFONT, UI_CONSOLE_CHAR_HEIGHT, 500 )
 			.SetOutlineSize()
 			.Create();
 		prevScale = scale;
@@ -147,6 +165,22 @@ int CFontManager::GetEllipsisWide(HFont font)
 	return 0;
 }
 
+int CFontManager::GetEllipsisWideScaled(HFont font, int charH)
+{
+	int wide = GetEllipsisWide( font );
+
+#ifdef SCALE_FONTS
+	// build 90: the cached "..." width is native raster pixels; convert it the
+	// same way GetCharacterWidthScaled converts a glyph row, so ellipsis
+	// accounting and the drawn dots land on the same columns
+	int tall = GetFontRequestTall( font );
+	if( charH > 0 && tall > 0 )
+		wide = (int)((float)wide * ((float)charH / (float)tall) + 0.5f );
+#endif
+
+	return wide;
+}
+
 void CFontManager::GetCharABCWide(HFont font, int ch, int &a, int &b, int &c)
 {
 	CBaseFont *pFont = GetIFontFromHandle( font );
@@ -163,13 +197,32 @@ int CFontManager::GetCharacterWidth(HFont font, int ch)
 	return a + b + c;
 }
 
+int CFontManager::GetFontRequestTall(HFont font)
+{
+	CBaseFont *pFont = GetIFontFromHandle( font );
+
+	if( pFont && pFont->GetRequestTall() > 0 )
+		return pFont->GetRequestTall();
+
+	// build 90: font was built outside CFontBuilder - its own line box is
+	// the best we have
+	return GetFontTall( font );
+}
+
 int CFontManager::GetCharacterWidthScaled(HFont font, int ch, int height)
 {
-	return GetCharacterWidth( font, ch )
+	int wide = GetCharacterWidth( font, ch );
+
 #ifdef SCALE_FONTS
-		* ((float)height / (float)GetFontTall( font ))
+	// build 90: match the draw-scale factor against the requested (device)
+	// height, so width metrics and CBaseFont::DrawCharacter agree pixel for
+	// pixel with the line the caller is laying out
+	int tall = GetFontRequestTall( font );
+	if( tall > 0 && height > 0 )
+		wide = wide * ((float)height / (float)tall);
 #endif
-	;
+
+	return wide;
 }
 
 HFont CFontManager::GetFontByName(const char *name)
@@ -274,7 +327,9 @@ int CFontManager::CutText(HFont fontHandle, const char *text, int height, int vi
 	utfstate_t state;
 
 #ifdef SCALE_FONTS
-	visibleSize  = (float)visibleSize / (float)height * (float)font->GetTall();
+	// build 90: same device-height basis as GetCharacterWidthScaled, so wrapping
+	// cuts where the scaled glyph row actually ends up on screen
+	visibleSize  = (float)visibleSize / (float)height * (float)GetFontRequestTall( fontHandle );
 #endif
 
 	int whiteSpacePos = 0;
@@ -434,7 +489,8 @@ int CFontManager::GetTextWideScaled(HFont font, const char *text, const int heig
 	{
 		return GetTextWide( font, text, size )
 #ifdef SCALE_FONTS
-			* ((float)height / (float)pFont->GetTall())
+			// build 90: keep width metrics on the requested device height
+			* ((float)height / (float)GetFontRequestTall( font ))
 #endif
 		;
 	}
@@ -481,6 +537,13 @@ HFont CFontBuilder::Create()
 {
 	CBaseFont *font;
 
+	// build 90: bake the current UI scale into the raster height ONCE, for
+	// every builder (menus/Main.cpp data-driven labels create ad-hoc
+	// CFontBuilder("Tahoma", 26, 600) fonts that never saw uiStatic.scaleY).
+	// A font is then always rasterized and drawn at its DEVICE height -
+	// never a fixed-height bitmap stretched over a scaled label line.
+	m_iTall = UI_DeviceFontTall( m_iTall );
+
 	// check existing font at first
 	if( !m_hForceHandle )
 	{
@@ -488,6 +551,8 @@ HFont CFontBuilder::Create()
 		{
 			font = g_FontMgr->m_Fonts[i];
 
+			// build 90: IsEqualTo compares m_iRequestTall, i.e. this scaled
+			// height - two ui scales can never share an atlas entry
 			if( font->IsEqualTo( m_szName, m_iTall, m_iWeight, m_iBlur, m_iFlags ) )
 				return i + 1;
 		}
@@ -520,9 +585,20 @@ HFont CFontBuilder::Create()
 		}
 	}
 
+	// build 90: record the requested device height as the font's identity;
+	// backends may pad m_iTall for their own line box (WinAPI adds leading)
+	font->m_iRequestTall = m_iTall;
+
 	g_FontMgr->UploadTextureForFont( font );
 
 	double endtime = EngFuncs::DoubleTime();
+
+	// A7 build 104: one visible line per created font saying which backend
+	// really renders the menu - "Bitmap Font" means the old stretched
+	// #XASH_SYSTEMFONT sheet (the gappy letters from the user's screenshot),
+	// anything else is the crisp Tahoma raster. Printed on success only,
+	// so a missing line = Create() failed before this point.
+	Con_Printf( "[A7] menu font: %s @ %d -> %s backend\n", m_szName, m_iTall, font->GetName());
 
 	Con_DPrintf( "Rendering %s(%i, %i) took %f seconds\n", font->GetName(), m_iTall, m_iWeight, endtime - starttime );
 
@@ -540,12 +616,15 @@ HFont CFontBuilder::Create()
 
 bool CFontManager::FindFontDataFile( const char *name, int tall, int weight, int flags, char *dataFile, size_t dataFileChars )
 {
-	if( !strcmp( name, "Trebuchet MS" ))
+	// build 90: case-insensitive match - any caller spelling ("tahoma",
+	// "Tahoma", ...) must still find the shipped ttf, otherwise that font
+	// silently drops to the Bitmap fallback and the whole menu goes chunky
+	if( !stricmp( name, "Trebuchet MS" ))
 	{
 		Q_strncpy( dataFile, "gfx/fonts/FiraSans-Regular.ttf", dataFileChars );
 		return true;
 	}
-	else if( !strcmp( name, "Tahoma" ))
+	else if( !stricmp( name, "Tahoma" ))
 	{
 		Q_strncpy( dataFile, "gfx/fonts/tahoma.ttf", dataFileChars );
 		return true;

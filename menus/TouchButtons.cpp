@@ -609,7 +609,10 @@ void CMenuTouchButtons::_VidInit()
 	save.SetRect( 384 - 42 + 320, 550, 170, 50 );
 	editor.SetRect( 384 - 42 + 320, 600, 170, 50 );
 
-	name.SetRect( 400, 550, 205, 32 );
+	// A7 build 61: moved down from y=550 - the "New Button:" field label
+	// was drawn directly on top of the "stick" checkbox label at y=510
+	// (visible as garbled "NewAButtonstick" in the touch editor)
+	name.SetRect( 400, 595, 205, 32 );
 	command.SetRect( 400, 150, field_w, 32 );
 	selectCmd.SetRect( 400 + field_w + 5, 150, 95, 32 );
 	texture.SetRect( 400, 250, field_w, 32 );
@@ -703,8 +706,9 @@ void CMenuCommandPickerDialog::Draw()
 {
 	UI_FillRect( 0, 0, gpGlobals->scrWidth, gpGlobals->scrHeight, 0x40000000 );
 
-	EngFuncs::FillRGBA( m_scPos.x, m_scPos.y, m_scSize.w, m_scSize.h, 20, 20, 20, 235 );
-	UI_DrawRectangle( m_scPos, m_scSize, uiInputFgColor );
+	// A7 retheme: olive panel + raised bevel (cs16.css dialog)
+	EngFuncs::FillRGBA( m_scPos.x, m_scPos.y, m_scSize.w, m_scSize.h, 74, 89, 66, 245 );
+	UI_DrawBevel( m_scPos, m_scSize, false );
 
 	EngFuncs::FillRGBA(
 		m_scPos.x + 16 * uiStatic.scaleX,
@@ -747,8 +751,15 @@ void UI_TouchButtons_GetButtonList()
 	menu_touchbuttons->model.Update();
 }
 
-// Engine callback
+// A7 build 88: fan out to the compact fold-in page inside the Options
+// dialog's Touch tab (menus/Configuration.cpp); guarded because that
+// page can request touch_list before this fullscreen menu is precached
+extern "C" void UI_OptionsTouchButtons_AddButton( const char *name, const char *texture, const char *command, unsigned char *color, int flags );
+
 extern "C" EXPORT void AddTouchButtonToList( const char *name, const char *texture, const char *command, unsigned char *color, int flags )
 {
-	menu_touchbuttons->model.AddButtonToList( name, texture, command, color, flags );
+	if( menu_touchbuttons )
+		menu_touchbuttons->model.AddButtonToList( name, texture, command, color, flags );
+
+	UI_OptionsTouchButtons_AddButton( name, texture, command, color, flags );
 }
