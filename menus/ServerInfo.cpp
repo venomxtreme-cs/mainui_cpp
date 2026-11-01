@@ -150,6 +150,15 @@ public:
 
 	const char *GetCellText( int line, int column ) override
 	{
+		// A7 build 112 (user: "click to view game info ... it crash"):
+		// PlayersResponse()/RulesResponse() rebuild these vectors from the
+		// network thread's callback WHILE the table is drawing - a row can
+		// outlive its data for one frame, and an empty vector index reads
+		// garbage (the SIGSEGV arrived with the CUtlString pointer at 0x1
+		// inside UI_DrawString). Out-of-range rows render empty, not crash.
+		if( line < 0 || line >= players.Count( ))
+			return NULL;
+
 		switch( column )
 		{
 		case COLUMN_POSITION: return players[line].index_str.String();
@@ -173,6 +182,11 @@ public:
 	int GetRows() const override { return rules.Count(); }
 	const char *GetCellText( int line, int column ) override
 	{
+		// A7 build 112: same async guard as the player model - RulesResponse
+		// refills `rules` between two draws of this table.
+		if( line < 0 || line >= rules.Count( ))
+			return NULL;
+
 		switch( column )
 		{
 		case COLUMN_RULE: return rules[line].rule.String();

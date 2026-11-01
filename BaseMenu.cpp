@@ -395,7 +395,12 @@ int UI_DrawString( HFont font, int x, int y, int w, int h,
 	int	xx = 0, yy, shadowOffset = 0, ch;
 	int maxX = x;
 
-	if( !string || !string[0] )
+	// A7 build 112: also reject LOW/foreign pointers. The View-game-info
+	// crash read string == 0x1 (an out-of-range table cell handed back a
+	// garbage CUtlString buffer) - a null test alone misses those, so any
+	// pointer below 0x1000 is treated as absent. Belt: the ServerInfo
+	// models bounds-check their rows themselves (user: "it crash after").
+	if( !string || string < (const char *)0x1000 || !string[0] )
 		return x;
 
 	if( flags & ETF_SHADOW )
@@ -1377,6 +1382,23 @@ UI_Init
 */
 void UI_Init( void )
 {
+	// A7 build 112: menu anti-theft handshake (engine half in
+	// cl_gameui.c UI_LoadProgs, which stamps ui_build_token right before
+	// loading this library). A foreign client that ripped libmenu.so out
+	// of our APK and loads it in its own engine never stamps the token,
+	// so bail out BEFORE uiStatic.initialized is set - every exported
+	// entry (UI_UpdateMenu, UI_KeyEvent, UI_SetActiveMenu, ...)
+	// early-returns on that flag below, and a shake-attempt on a wrong
+	// value falls through to the same refusal (user: "even if he used to
+	// his own client won't show gameui goldsource").
+	const char *token = EngFuncs::GetCvarString( "ui_build_token" );
+
+	if( !token || !token[0] || stricmp( token, "M3nuS3al7xK9pQ2vT6wJ5rB8dH4fN1cZ" ))
+	{
+		Con_Printf( "menu: integrity token missing or wrong - GameUI refused to start\n" );
+		return;
+	}
+
 	// register our cvars and commands
 	ui_showmodels = EngFuncs::CvarRegister( "ui_showmodels", "0", FCVAR_ARCHIVE );
 	ui_showclassmodels = EngFuncs::CvarRegister( "ui_showclassmodels", "1", FCVAR_ARCHIVE );
