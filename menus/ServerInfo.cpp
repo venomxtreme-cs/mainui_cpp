@@ -201,7 +201,8 @@ public:
 class CMenuServerInfo : public CMenuFramework
 {
 public:
-	CMenuServerInfo() : CMenuFramework( "CMenuServerInfo" ), m_playersPending( 0 ), m_rulesPending( 0 ) {}
+	CMenuServerInfo() : CMenuFramework( "CMenuServerInfo" ), m_playersPending( 0 ), m_rulesPending( 0 ),
+		m_gotPing( 0 ), m_gotPlayers( 0 ), m_gotRules( 0 ), m_retryCount( 0 ), m_retryTime( 0 ) {}
 
 	void Set( netadr_t adr, const char *hostname )
 	{
@@ -219,6 +220,7 @@ public:
 	void Think( void ) override;
 
 	void DoNetworkRequests();
+	void RetryMissingRequests(); // A7 build 127: re-send dropped requests
 
 	void PingResponse( net_response_t *resp );
 	void PlayersResponse( net_response_t *resp );
@@ -258,6 +260,18 @@ private:
 	volatile int m_playersPending;
 	volatile int m_rulesPending;
 
+	// A7 build 127 (round 128): the engine's request pool is tiny and
+	// NetAPI_SendRequest silently evicts the OLDEST slot when it is full
+	// (memset, no callback) - while the browser is flooding it with
+	// ui_queryserver queries our PLAYERS/RULES request can just vanish,
+	// leaving both tables blank. Track which replies actually arrived and
+	// re-issue the missing ones from Think() a few times.
+	volatile int m_gotPing;
+	volatile int m_gotPlayers;
+	volatile int m_gotRules;
+	int m_retryCount;      // how many retry rounds have been spent
+	int m_retryTime;       // uiStatic.realTime (ms) of the next retry, 0 = none
+
 	char server_hostname_str[64];
 	char server_address_str[64]; // enough for both IPv4 and IPv6
 	char ping_str[16];
@@ -286,6 +300,7 @@ void CMenuServerInfo::PingResponse( net_response_t *resp )
 
 	snprintf( ping_str, sizeof( ping_str ), "%.f ms.", resp->ping * 1000.0f );
 	server_pingtime.szName = ping_str;
+	m_gotPing = 1;
 }
 
 void CMenuServerInfo::PlayersResponse( net_response_t *resp )
@@ -333,6 +348,7 @@ void CMenuServerInfo::PlayersResponse( net_response_t *resp )
 
 	// publish AFTER the fill - the UI thread only reads pending when set
 	m_playersPending = 1;
+	m_gotPlayers = 1;
 }
 
 void CMenuServerInfo::RulesResponse( net_response_t *resp )
@@ -373,6 +389,13 @@ void CMenuServerInfo::RulesResponse( net_response_t *resp )
 
 		p = strtok( nullptr, "\\" );
 	} while( true );
+
+	// A7 build 127 (round 128): publish AFTER the fill, same as
+	// PlayersResponse above. This flag was never set here, so Think()
+	// never committed m_pendingRules and the rules table stayed empty
+	// forever ("view game info sometimes doesn't show players and more").
+	m_rulesPending = 1;
+	m_gotRules = 1;
 }
 
 /*
@@ -402,6 +425,9 @@ void CMenuServerInfo::Think( void )
 		m_rulesPending = 0;
 	}
 
+	// A7 build 127 (round 128): re-send nothing until it is time
+	RetryMissingRequests();
+
 	CMenuFramework::Think();
 }
 
@@ -426,6 +452,12 @@ void CMenuServerInfo::DoNetworkRequests()
 	int flags = 0;
 	const double timeout = 10.0;
 
+	// A7 build 127 (round 128): fresh round of tracking each time the
+	// dialog opens.
+	m_gotPing = m_gotPlayers = m_gotRules = 0;
+	m_retryCount = 0;
+	m_retryTime = uiStatic.realTime + 4000;
+
 	ping_context = EngFuncs::RandomLong( 0, 0x7fffffff );
 	EngFuncs::textfuncs.pNetAPI->SendRequest( ping_context, NETAPI_REQUEST_PING, flags, timeout, &m_adr, CMenuServerInfo::PingResponseFunc );
 
@@ -434,6 +466,68 @@ void CMenuServerInfo::DoNetworkRequests()
 
 	rules_context = EngFuncs::RandomLong( 0, 0x7fffffff );
 	EngFuncs::textfuncs.pNetAPI->SendRequest( rules_context, NETAPI_REQUEST_RULES, flags, timeout, &m_adr, CMenuServerInfo::RulesResponseFunc );
+}
+
+/*
+=================
+CMenuServerInfo::RetryMissingRequests
+
+A7 build 127 (round 128): the engine only has a handful of net-request
+slots and NetAPI_SendRequest evicts the oldest one SILENTLY when the pool
+is full (memset, no callback). While the server browser is querying a full
+list (Internet tab refresh / Friends / Add-server), our PLAYERS or RULES
+request can be the one thrown away - so the reply never comes and the
+panels stay blank. Re-send anything that has not answered yet, up to 3
+rounds, from the UI thread.
+=================
+*/
+void CMenuServerInfo::RetryMissingRequests()
+{
+	if( !m_retryTime || uiStatic.realTime < m_retryTime )
+		return;
+
+	m_retryTime = 0;
+	m_retryCount++;
+
+	if( m_retryCount > 3 )
+		return;
+
+	int flags = 0;
+	const double timeout = 10.0;
+
+	// build 127: one-shot breadcrumb proving the retry path is in the
+	// shipped mainui .so (scan greps for this literal).
+	if( !m_gotPing || !m_gotPlayers || !m_gotRules )
+	{
+		static bool bRetryWarned;
+		if( !bRetryWarned )
+		{
+			bRetryWarned = true;
+			Con_Printf( "[A7] build127: server info reply missing - re-requesting (round %d)\n", m_retryCount );
+		}
+	}
+
+	if( !m_gotPing )
+	{
+		ping_context = EngFuncs::RandomLong( 0, 0x7fffffff );
+		EngFuncs::textfuncs.pNetAPI->SendRequest( ping_context, NETAPI_REQUEST_PING, flags, timeout, &m_adr, CMenuServerInfo::PingResponseFunc );
+	}
+
+	if( !m_gotPlayers )
+	{
+		players_context = EngFuncs::RandomLong( 0, 0x7fffffff );
+		EngFuncs::textfuncs.pNetAPI->SendRequest( players_context, NETAPI_REQUEST_PLAYERS, flags, timeout, &m_adr, CMenuServerInfo::PlayersResponseFunc );
+	}
+
+	if( !m_gotRules )
+	{
+		rules_context = EngFuncs::RandomLong( 0, 0x7fffffff );
+		EngFuncs::textfuncs.pNetAPI->SendRequest( rules_context, NETAPI_REQUEST_RULES, flags, timeout, &m_adr, CMenuServerInfo::RulesResponseFunc );
+	}
+
+	// next chance to retry (only set when something is still missing)
+	if( !m_gotPing || !m_gotPlayers || !m_gotRules )
+		m_retryTime = uiStatic.realTime + 4000;
 }
 
 void CMenuServerInfo::Show()
@@ -449,6 +543,9 @@ void CMenuServerInfo::Show()
 	m_pendingRules.RemoveAll();
 	m_playersPending = 0;
 	m_rulesPending = 0;
+	// A7 build 127: drop any stale retry timer from a previous open
+	m_retryTime = 0;
+	m_retryCount = 0;
 
 	players_list.SetSortingColumn( COLUMN_POSITION, true );
 }
@@ -460,6 +557,7 @@ void CMenuServerInfo::Hide()
 	EngFuncs::textfuncs.pNetAPI->CancelRequest( ping_context );
 
 	ping_context = players_context = rules_context = -1;
+	m_retryTime = 0; // A7 build 127: don't re-issue while hidden
 
 	CMenuFramework::Hide();
 }

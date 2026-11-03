@@ -400,8 +400,28 @@ int UI_DrawString( HFont font, int x, int y, int w, int h,
 	// garbage CUtlString buffer) - a null test alone misses those, so any
 	// pointer below 0x1000 is treated as absent. Belt: the ServerInfo
 	// models bounds-check their rows themselves (user: "it crash after").
-	if( !string || string < (const char *)0x1000 || !string[0] )
+	//
+	// A7 build 127 (round 128): the round-128 log crashed with
+	// string == 0x64696f00000000 - a HIGH garbage pointer (bytes "oid "
+	// spliced out of reused text memory), which the 0x1000 floor above
+	// cannot catch, and string[0] then faulted. AArch46/x86-64 user
+	// addresses are canonical: bits 48..63 must be all 0 (or all 1 for
+	// kernel). Every pointer that is about to be dereferenced as a C
+	// string must live below bit 48 - reject anything else and draw
+	// nothing rather than crash the browser (user: "crash when view
+	// game servers").
+	if( !string || string < (const char *)0x1000 || ( (uintptr_t)string >> 48 ) != 0 || !string[0] )
+	{
+		// build 127: one-shot breadcrumb so the scan can prove the guard is
+		// in the shipped .so the first time it actually fires in the field.
+		static bool bBadStringWarned;
+		if( !bBadStringWarned && string )
+		{
+			bBadStringWarned = true;
+			Con_Printf( "[A7] build127: UI_DrawString refused a non-canonical string ptr (crash guard)\n" );
+		}
 		return x;
+	}
 
 	if( flags & ETF_SHADOW )
 	{

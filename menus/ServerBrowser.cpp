@@ -42,14 +42,21 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 
 class CMenuServerBrowser;
 
+// A7 build 127 (round 128): display order now matches the original
+// GoldSource "Servers" window (user: "improve find servers like original
+// goldsource, check pictures"):
+//   [lock][star] Players | Servers (N) | Game | Map | Latency | (ip)
+// COLUMN_* stays the identity of a column everywhere; only the numbers
+// (which ARE the on-screen order) moved, plus the new COLUMN_GAME.
 enum
 {
 	COLUMN_PASSWORD = 0,
 	COLUMN_FAVORITE,
-	COLUMN_NAME,
-	COLUMN_MAP,
 	COLUMN_PLAYERS,
-	COLUMN_PING,
+	COLUMN_NAME,     // header is set dynamically: "Servers (<count>)"
+	COLUMN_GAME,
+	COLUMN_MAP,
+	COLUMN_PING,     // header "Latency", value = plain ms number
 	COLUMN_IP,
 	COLUMN_LAST
 };
@@ -63,6 +70,7 @@ struct server_t
 	int  maxcl;
 	char name[64];
 	char mapname[64];
+	char gamestr[64]; // A7 build 127: GoldSource "Game" column (mod name)
 	char clientsstr[64];
 	char pingstr[64];
 	char ipstr[64];
@@ -292,6 +300,7 @@ public:
 		case COLUMN_PASSWORD: return servers[line].havePassword ? ART_BANNER_LOCK : NULL;
 		case COLUMN_FAVORITE: return servers[line].favorite ? ART_BANNER_FAVORITE : NULL;
 		case COLUMN_NAME: return servers[line].name;
+		case COLUMN_GAME: return servers[line].gamestr;
 		case COLUMN_MAP: return servers[line].mapname;
 		case COLUMN_PLAYERS: return servers[line].clientsstr;
 		case COLUMN_PING: return servers[line].pingstr;
@@ -559,9 +568,33 @@ void server_t::UpdateData( void )
 	Q_strncpy( ipstr, EngFuncs::NET_AdrToString( adr ), sizeof( ipstr ));
 	numcl = atoi( Info_ValueForKey( info, "numcl" ));
 	maxcl = atoi( Info_ValueForKey( info, "maxcl" ));
-	snprintf( clientsstr, sizeof( clientsstr ), "%d\\%d", numcl, maxcl );
+	// A7 build 127 (round 128): the reference GoldSource browser prints
+	// "14 / 32" (slash, spaces), not the old "14\32" backslash form
+	snprintf( clientsstr, sizeof( clientsstr ), "%d / %d", numcl, maxcl );
 	havePassword = !strcmp( Info_ValueForKey( info, "password" ), "1" );
 	isGoldSrc = !strcmp( Info_ValueForKey( info, "gs" ), "1" );
+
+	// A7 build 127: the GoldSource "Game" column - the mod name the server
+	// reports ("game" key, falling back to "gamedir"), with the well-known
+	// folder names spelled out the way original GameUI shows them.
+	{
+		const char *g = Info_ValueForKey( info, "game" );
+
+		if( !g || !g[0] )
+			g = Info_ValueForKey( info, "gamedir" );
+
+		if( !g || !g[0] )
+			Q_strncpy( gamestr, "-", sizeof( gamestr ));
+		else if( !stricmp( g, "cstrike" ))
+			Q_strncpy( gamestr, "Counter-Strike", sizeof( gamestr ));
+		else if( !stricmp( g, "czero" ))
+			Q_strncpy( gamestr, "Condition Zero", sizeof( gamestr ));
+		else if( !stricmp( g, "valve" ))
+			Q_strncpy( gamestr, "Half-Life", sizeof( gamestr ));
+		else if( !stricmp( g, "tfc" ))
+			Q_strncpy( gamestr, "Team Fortress Classic", sizeof( gamestr ));
+		else Q_strncpy( gamestr, g, sizeof( gamestr ));
+	}
 }
 
 void server_t::SetPing( float ping )
@@ -569,7 +602,9 @@ void server_t::SetPing( float ping )
 	ping = bound( 0.0f, ping, MAX_PING );
 
 	this->ping = ping;
-	snprintf( pingstr, sizeof( pingstr ), "%.f ms", ping * 1000 );
+	// A7 build 127: the reference Latency column is a bare number (header
+	// says "Latency"), not "99 ms"
+	snprintf( pingstr, sizeof( pingstr ), "%.f", ping * 1000 );
 }
 
 bool CMenuGameListModel::Sort(int column, bool ascend)
@@ -616,6 +651,16 @@ CMenuServerBrowser::GetGamesList
 void CMenuGameListModel::Update( void )
 {
 	int		i;
+
+	// A7 build 127 (round 128): the original GoldSource browser carries the
+	// row count in the Name column header - "Servers (12)" in the user's
+	// screenshots. Static buffer: the table only stores the pointer, so it
+	// must outlive this call.
+	{
+		static char s_serversHeader[32];
+		snprintf( s_serversHeader, sizeof( s_serversHeader ), "Servers (%d)", servers.Count() );
+		parent->gameList.SetHeaderText( COLUMN_NAME, s_serversHeader );
+	}
 
 	// regenerate table data
 	for( i = 0; i < servers.Count(); i++ )
@@ -1447,13 +1492,29 @@ void CMenuServerBrowser::_Init( void )
 	msgBox.Link( this );
 
 	gameList.SetCharSize( QM_SMALLFONT );
+	// A7 build 127 (round 128): GoldSource column order + headers taken
+	// from the user's reference screenshots: [lock][star] | Players |
+	// Servers (N) | Game | Map | Latency | (hidden ip). The Name header
+	// text is refreshed with the live row count from the model's Update().
 	gameList.SetupColumn( COLUMN_PASSWORD, NULL, 32.0f, true );
 	gameList.SetupColumn( COLUMN_FAVORITE, NULL, 32.0f, true );
-	gameList.SetupColumn( COLUMN_NAME, L( "Name" ), 0.40f );
-	gameList.SetupColumn( COLUMN_MAP, L( "GameUI_Map" ), 0.25f );
-	gameList.SetupColumn( COLUMN_PLAYERS, L( "Players" ), 100.0f, true );
-	gameList.SetupColumn( COLUMN_PING, L( "Ping" ), 120.0f, true );
+	gameList.SetupColumn( COLUMN_PLAYERS, L( "Players" ), 110.0f, true );
+	gameList.SetupColumn( COLUMN_NAME, "Servers (0)", 0.34f );
+	gameList.SetupColumn( COLUMN_GAME, L( "Game" ), 0.16f );
+	gameList.SetupColumn( COLUMN_MAP, L( "GameUI_Map" ), 0.16f );
+	gameList.SetupColumn( COLUMN_PING, L( "Latency" ), 90.0f, true );
 	gameList.SetupColumn( COLUMN_IP, L( "IP" ), 0, true );
+	// A7 build 127 (round 128): one-shot proof the GoldSource column layout
+	// shipped into libmenu (scan marker).
+	{
+		static int a7_browserColsLogged = 0;
+
+		if( !a7_browserColsLogged )
+		{
+			a7_browserColsLogged = 1;
+			Con_Printf( "[A7] build127: goldsource server columns (Players | Servers (N) | Game | Map | Latency)\n" );
+		}
+	}
 	gameList.SetModel( &gameListModel );
 	gameList.bFramedHintText = true;
 	gameList.bAllowSorting = true;
@@ -1522,7 +1583,12 @@ void CMenuServerBrowser::_Init( void )
 	serverProtocol.SetRect( 64, 100, 512, 32 );\
 
 	addServerBox.onPositive = VoidCb( &CMenuServerBrowser::AddServer );
-	addServerBox.SetMessage( L( "Enter server Internet address\n(e.g., 209.255.10.255:27015)" ));
+	// A7 build 127 (round 128): the original GoldSource "Add Server"
+	// wording + example addresses from the user's reference screenshot.
+	// Kept to 3 lines: the message must stay above the protocol spin at
+	// y=100 in this fixed 640x256 dialog (the original stacks the
+	// examples under the field, we have no room for that here).
+	addServerBox.SetMessage( L( "Enter the IP address of the server you wish to add.\nExamples: tfc.valvesoftware.com, counterstrike.speakeasy.net:27016\nor 205.158.143.200:27015" ));
 	addServerBox.dlgMessage1.SetCoord( 8, 8 ); // a bit offset
 	addServerBox.dlgMessage1.eTextAlignment = QM_TOPLEFT;
 	addServerBox.Link( this );

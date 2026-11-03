@@ -113,6 +113,18 @@ void CMenuMain::QuitDialogCb()
 
 	dialog.onPositive.SetCommand( false, "quit \"menu dialog\"\n" );
 	dialog.Show();
+	// A7 build 127 (round 128): Show() re-arms the open fade every time, so
+	// drop it right after - the confirm box must be on screen the instant it
+	// is asked for (GoldSource shows it flat, no animation) - user: "ingame
+	// disconnect are of them too late like freeze".
+	dialog.DisableTransition();
+	// build 127: one-shot breadcrumb proving the instant-confirm build ships.
+	static bool bInstantDialogWarned;
+	if( !bInstantDialogWarned )
+	{
+		bInstantDialogWarned = true;
+		Con_Printf( "[A7] build127: confirm dialogs open with no transition\n" );
+	}
 }
 
 void CMenuMain::DisconnectCb()
@@ -129,6 +141,10 @@ void CMenuMain::DisconnectDialogCb()
 	dialog.onPositive = VoidCb( &CMenuMain::DisconnectCb );
 	dialog.SetMessage( L( "Really disconnect?" ) );
 	dialog.Show();
+	// A7 build 127 (round 128): no open animation on the disconnect confirm
+	// either - one less frame of perceived lag before the disconnect starts
+	// (see QuitDialogCb).
+	dialog.DisableTransition();
 }
 
 /*
