@@ -374,6 +374,32 @@ void CMenuConnectionProgress::Draw( void )
 
 ADD_MENU3( menu_connectionprogress, CMenuConnectionProgress, UI_ConnectionProgress_f );
 
+// A7 build 126 (item 5, user: "menu of after finish download with cancel
+// original xash, remove it"): on Android the platform loading window
+// (XashActivity overlay - opaque, with its own Cancel) IS the join view.
+// This xash-styled dialog (Cancel/Skip/Console buttons + the Esc "Really
+// disconnect?" box) used to sit on top of it after the download finished.
+// Every door funnels through these exports - the engine wrappers in
+// cl_gameui.c, ServerBrowser.cpp's direct call and the connectionprogress
+// console command - so one guard removes it everywhere. Disconnect stays:
+// with the state machine never leaving STATE_NONE, HandleDisconnect is a
+// no-op, and the engine reports connection failures itself.
+#if XASH_ANDROID
+static bool a7_conn_dialog_logged = false;
+
+static void A7_ConnDialogOff( void )
+{
+	if( !a7_conn_dialog_logged )
+	{
+		a7_conn_dialog_logged = true;
+		Con_Printf( "[A7] build126: xash connection dialog suppressed - Android join view is the platform loading window\n" );
+	}
+}
+#define A7_CONN_DIALOG_OFF( ) do { A7_ConnDialogOff(); return; } while( 0 )
+#else
+#define A7_CONN_DIALOG_OFF( ) do { } while( 0 )
+#endif
+
 // exports
 void UI_ConnectionProgress_Disconnect( void )
 {
@@ -382,6 +408,8 @@ void UI_ConnectionProgress_Disconnect( void )
 
 void UI_ConnectionProgress_Download( const char *pszFileName, const char *pszServerName, int iCurrent, int iTotal, const char *comment )
 {
+	A7_CONN_DIALOG_OFF( );
+
 	if( menu_connectionprogress->m_iState == STATE_CONSOLE )
 		return;
 
@@ -399,6 +427,8 @@ void UI_ConnectionProgress_Download( const char *pszFileName, const char *pszSer
 
 void UI_ConnectionProgress_DownloadEnd( void )
 {
+	A7_CONN_DIALOG_OFF( );
+
 	if( menu_connectionprogress->m_iState == STATE_CONSOLE )
 		return;
 
@@ -421,6 +451,8 @@ void UI_ConnectionProgress_DownloadEnd( void )
 
 void UI_ConnectionProgress_Precache( void )
 {
+	A7_CONN_DIALOG_OFF( );
+
 	if( menu_connectionprogress->m_iState == STATE_CONSOLE )
 		return;
 
@@ -430,6 +462,8 @@ void UI_ConnectionProgress_Precache( void )
 
 void UI_ConnectionProgress_Connect( const char *server ) // NULL for local server
 {
+	A7_CONN_DIALOG_OFF( );
+
 	if( menu_connectionprogress->m_iState == STATE_CONSOLE )
 		return;
 
@@ -447,6 +481,8 @@ void UI_ConnectionProgress_Connect( const char *server ) // NULL for local serve
 
 void UI_ConnectionProgress_ChangeLevel( void )
 {
+	A7_CONN_DIALOG_OFF( );
+
 	if( menu_connectionprogress->m_iState == STATE_CONSOLE )
 		return;
 
@@ -457,6 +493,8 @@ void UI_ConnectionProgress_ChangeLevel( void )
 
 void UI_ConnectionProgress_ParseServerInfo( const char *server )
 {
+	A7_CONN_DIALOG_OFF( );
+
 	if( menu_connectionprogress->m_iState == STATE_CONSOLE )
 		return;
 
@@ -482,6 +520,9 @@ void UI_ConnectionProgress_f( void )
 	}
 	else if( !strcmp( EngFuncs::CmdArgv(1), "stufftext" ) )
 	{
+		// A7 build 126 (item 5): the only branch that bypasses the
+		// guarded exports - same suppression, dialog stays down on Android
+		A7_CONN_DIALOG_OFF( );
 		menu_connectionprogress->HandleStufftext( atof( EngFuncs::CmdArgv( 2 ) ), EngFuncs::CmdArgv( 3 ) );
 	}
 	else if( !strcmp( EngFuncs::CmdArgv(1), "precache" ) )

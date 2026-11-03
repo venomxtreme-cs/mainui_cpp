@@ -232,12 +232,31 @@ bool CMenuBackgroundBitmap::LoadSteamBackground( bool gamedirOnly )
 
 	bool loaded = false;
 
-	// try 25'th anniversary update background first
-	if( FBitSet( gMenu.m_gameinfo.flags, GFL_HD_BACKGROUND ))
+	// A7 build 126 (item 1, user: "remove background counter strike 1.6 hd,
+	// its not original, find original background"): the ORIGINAL collage
+	// ships in every gamedir (resource/BackgroundLayout.txt, 1280_* tiles -
+	// the same one GoldSource shows) and is now tried FIRST. The 25'th-
+	// anniversary HD layout (resource/HD_BackgroundLayout.txt, 3840x1600
+	// "CS1.6 HD" tiles) is only a fallback for gamedirs that carry no
+	// original layout at all. Code-only: no asset is touched, so the
+	// content check against 1.36.07 keeps passing.
+	bool original = false;
+
+	afile = (char *)EngFuncs::COM_LoadFile( "resource/BackgroundLayout.txt" );
+	if( afile )
+		original = true;
+	else if( FBitSet( gMenu.m_gameinfo.flags, GFL_HD_BACKGROUND ))
 		afile = (char *)EngFuncs::COM_LoadFile( "resource/HD_BackgroundLayout.txt" );
 
-	if( !afile )
-		afile = (char *)EngFuncs::COM_LoadFile( "resource/BackgroundLayout.txt" );
+	// A7 build 126: one-shot proof in engine.log of WHICH layout won
+	// (also the scan marker that this code ships in libmenu)
+	static bool s_a7_bg_logged = false;
+	if( afile && !s_a7_bg_logged )
+	{
+		s_a7_bg_logged = true;
+		Con_Printf( "[A7] build126: background layout %s\n",
+			original ? "original" : "HD fallback" );
+	}
 
 	if( !afile )
 		return false;
