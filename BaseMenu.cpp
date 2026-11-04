@@ -32,6 +32,10 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 #include "utflib.h"
 // A7 build 87: UI_UpdateSoundSet needs the full CMenuBaseWindow (IsMainMenuRoot)
 #include "BaseWindow.h"
+// A7 build 133: the /proc/self/maps range table for the string-pointer belt
+#include <stdio.h>
+#include <stdlib.h>
+#include <time.h>
 
 cvar_t		*ui_showmodels;
 cvar_t		*ui_showclassmodels;
@@ -382,6 +386,141 @@ void UI_DrawTriangle( Point pos, Size size, bool bUp, unsigned int color )
 	}
 }
 
+// A7 build 133 (round 134): the LAST belt before anything reads a string.
+// Build 132 proved two pointer classes reach UI_DrawString: Android-tagged
+// heap strings (0xb400... - those are real and now draw, the text fix) and
+// CANONICAL garbage such as 0x1b00000000 (build 132 device log: "signal 11
+// ... at 0x1b00000000", frames UI_DrawString+0xbc <- CMenuTable::DrawLine).
+// A canonical value passes every arithmetic test there is - not null, above
+// 0x1000, below 2^48 - but it is NOT MAPPED, so the first load faults. The
+// only honest answer is the process's own memory map: parse /proc/self/maps
+// once (it is address-sorted, so a lookup is a ~11-compare binary search per
+// draw call), refresh it at most every 2 seconds when a lookup misses, and
+// refuse anything outside a readable region - one 1-byte read that cannot
+// fault instead of a crash. On a platform without /proc (Windows dev builds)
+// the check degrades to "assume readable", i.e. the pre-build-133 behaviour.
+typedef struct
+{
+	uintptr_t lo;
+	uintptr_t hi;
+} a7mapsrange_t;
+
+static a7mapsrange_t *s_pA7MapsRanges = NULL;
+static int   s_iA7MapsRanges = 0;
+static int   s_iA7MapsCap = 0;
+static bool  s_bA7MapsLoaded = false; // a parse was attempted at least once
+static bool  s_bA7MapsAvail = false;  // /proc/self/maps opened AND gave ranges
+static time_t s_tA7MapsRefresh = 0;   // earliest next re-parse on a miss
+
+static void UI_MapsAddRange( uintptr_t lo, uintptr_t hi )
+{
+	if( hi <= lo )
+		return;
+
+	if( s_iA7MapsRanges >= s_iA7MapsCap )
+	{
+		int newCap = s_iA7MapsCap ? s_iA7MapsCap * 2 : 512;
+		a7mapsrange_t *p = (a7mapsrange_t *)realloc( s_pA7MapsRanges, newCap * sizeof( a7mapsrange_t ));
+		if( !p )
+			return; // refusing to grow is not fatal - the old table still works
+		s_pA7MapsRanges = p;
+		s_iA7MapsCap = newCap;
+	}
+
+	s_pA7MapsRanges[s_iA7MapsRanges].lo = lo;
+	s_pA7MapsRanges[s_iA7MapsRanges].hi = hi;
+	s_iA7MapsRanges++;
+}
+
+static void UI_MapsLoad( void )
+{
+	char line[512];
+	FILE *f;
+
+	s_iA7MapsRanges = 0;
+	s_bA7MapsLoaded = true;
+	s_bA7MapsAvail = false;
+
+	f = fopen( "/proc/self/maps", "r" );
+	if( !f )
+		return; // no /proc: caller falls back to the range tests only
+
+	while( fgets( line, sizeof( line ), f ))
+	{
+		unsigned long long lo = 0, hi = 0;
+		char perms[8] = "";
+
+		// "00600000-00611000 r--p 00000000 00:00 0" - only readable regions
+		// matter: a string we may read is exactly a readable mapping.
+		if( sscanf( line, "%llx-%llx %7s", &lo, &hi, perms ) == 3 && perms[0] == 'r' )
+			UI_MapsAddRange( (uintptr_t)lo, (uintptr_t)hi );
+	}
+	fclose( f );
+
+	if( s_iA7MapsRanges == 0 )
+		return; // parsed nothing - behave as if /proc were absent
+
+	s_bA7MapsAvail = true;
+
+	// one-shot field proof that this belt shipped inside libmenu
+	static bool bRangeCheckLogged;
+
+	if( !bRangeCheckLogged )
+	{
+		bRangeCheckLogged = true;
+		Con_Printf( "[A7] build133: string ptr range check active - %d readable ranges loaded from /proc/self/maps\n",
+			s_iA7MapsRanges );
+	}
+}
+
+static bool UI_MapsFind( uintptr_t addr )
+{
+	int lo = 0, hi = s_iA7MapsRanges - 1;
+
+	while( lo <= hi )
+	{
+		int mid = lo + ( hi - lo ) / 2;
+
+		if( addr < s_pA7MapsRanges[mid].lo )
+			hi = mid - 1;
+		else if( addr >= s_pA7MapsRanges[mid].hi )
+			lo = mid + 1;
+		else
+			return true;
+	}
+
+	return false;
+}
+
+static bool UI_PtrIsMapped( uintptr_t addr )
+{
+	if( !addr )
+		return false;
+
+	if( !s_bA7MapsLoaded )
+		UI_MapsLoad();
+
+	if( !s_bA7MapsAvail )
+		return true; // cannot verify here - keep the old behaviour
+
+	if( UI_MapsFind( addr ))
+		return true;
+
+	// Miss means either garbage (the crash case) or a region created after
+	// the last parse (dlopen, heap growth). Re-parse at most every 2 s so a
+	// bad row can never turn every frame into a file read.
+	if( time( NULL ) >= s_tA7MapsRefresh )
+	{
+		s_tA7MapsRefresh = time( NULL ) + 2;
+		UI_MapsLoad();
+
+		if( s_bA7MapsAvail && UI_MapsFind( addr ))
+			return true;
+	}
+
+	return false;
+}
+
 /*
 =================
 UI_DrawString
@@ -442,8 +581,12 @@ int UI_DrawString( HFont font, int x, int y, int w, int h,
 	const bool bNull = ( string == NULL );
 	const bool bLow = !bNull && addr < 0x1000;
 	const bool bHigh = !bNull && ( canon >> 48 ) != 0;
+	// build 133: a value can be perfectly canonical and still not exist -
+	// 0x1b00000000 passed every test above and faulted on the first read
+	// (build 132 device log). Only the process's own maps can tell.
+	const bool bUnmapped = !bNull && !bLow && !bHigh && !UI_PtrIsMapped( addr );
 
-	if( bNull || bLow || bHigh )
+	if( bNull || bLow || bHigh || bUnmapped )
 	{
 		// build 127: one-shot breadcrumb so the scan can prove the guard is
 		// in the shipped .so the first time it actually fires in the field.
@@ -452,13 +595,23 @@ int UI_DrawString( HFont font, int x, int y, int w, int h,
 		// values are printed - with WHERE the draw was attempted, which pairs
 		// with the [A7] build131: row dump from CMenuMain::VidInit.
 		static bool bBadStringWarned;
+		static bool bUnmappedWarned;
 
 		if( !bBadStringWarned )
 		{
 			bBadStringWarned = true;
 			Con_Printf( "[A7] build127: UI_DrawString refused a non-canonical string ptr (crash guard) "
 				"- build132: reason=%s raw=%p masked=%p screen %d,%d %dx%d\n",
-				bNull ? "null" : ( bLow ? "low" : "high" ),
+				bNull ? "null" : ( bLow ? "low" : ( bHigh ? "high" : "unmapped" )),
+				(const void *)rawPtr, (const void *)addr, x, y, w, h );
+		}
+
+		if( bUnmapped && !bUnmappedWarned )
+		{
+			bUnmappedWarned = true;
+			Con_Printf( "[A7] build133: UI_DrawString refused an UNMAPPED string ptr "
+				"raw=%p masked=%p screen %d,%d %dx%d (canonical value, no readable "
+				"mapping - never dereferenced)\n",
 				(const void *)rawPtr, (const void *)addr, x, y, w, h );
 		}
 		return x;
