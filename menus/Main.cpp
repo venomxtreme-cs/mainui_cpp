@@ -312,6 +312,21 @@ void CMenuMain::VidInit( bool connected )
 	int rows = bottomRows + 2 + ( connected ? 3 : 0 ); // + Random row + spacer
 	int y = ( size.h - 84 ) - 44 - ( rows - 1 ) * ygap;
 
+	// A7 build 130 (round 131, user: rows look "cut at the left edge"):
+	// one-shot dump of the column geometry in 1024x768 menu space - with
+	// the [A7] build130: layout line from UI_VidInit this says exactly where
+	// every row is meant to start on screen.
+	{
+		static bool loggedRows = false;
+		if( !loggedRows )
+		{
+			loggedRows = true;
+			Con_Printf( "[A7] build130: mainmenu rows x=%d y0=%d ygap=%d rows=%d "
+				"size=%dx%d connected=%d\n",
+				x, y, ygap, rows, size.w, size.h, connected ? 1 : 0 );
+		}
+	}
+
 	if( connected )
 	{
 		y += ygap; // top slot stays blank while connected

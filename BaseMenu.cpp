@@ -1117,6 +1117,11 @@ void UI_ApplyCustomColors( void )
 	{
 		// not error, not warning, just notify
 		Con_Printf( "UI_ApplyCustomColors: colors.lst not found\n" );
+		// A7 build 130 (round 131): no file on disk -> the palette is the
+		// built-in one; say so once so an orange menu on the device can
+		// never be blamed on an invisible colors.lst
+		Con_Printf( "[A7] build130: colors not applied - colors.lst absent, "
+			"built-in palette active\n" );
 		return;
 	}
 
@@ -1154,6 +1159,24 @@ void UI_ApplyCustomColors( void )
 		{
 			UI_ParseColor( pfile, &uiColorConsole );
 		}
+	}
+
+	// A7 build 130 (round 131, user screenshots: the main-menu rows draw
+	// ORANGE): this parse is the ONLY writer of the palette besides the
+	// defaults at the top of this file - so a stale on-device
+	// gfx/shell/colors.lst repaints the whole UI. Report the palette that
+	// was actually applied; one line in engine.log answers "is the device
+	// serving a stale colours file?". The bundle ships this file now
+	// (stage/*/gfx/shell/colors.lst, always refreshed by the installers),
+	// carrying exactly these default values.
+	{
+		int pr, pg, pb, fr, fg, fb, br, bg, bb;
+		UnpackRGB( pr, pg, pb, uiPromptTextColor );
+		UnpackRGB( fr, fg, fb, uiPromptFocusColor );
+		UnpackRGB( br, bg, bb, uiPromptBgColor );
+		Con_Printf( "[A7] build130: colors applied from gfx/shell/colors.lst: "
+			"prompt %d %d %d, focus %d %d %d, bg %d %d %d\n",
+			pr, pg, pb, fr, fg, fb, br, bg, bb );
 	}
 
 	int	r, g, b;
@@ -1312,6 +1335,28 @@ int UI_VidInit( void )
 	uiStatic.xOffset = uiStatic.safeLeft / uiStatic.scaleX;
 	uiStatic.yOffset += uiStatic.safeTop / uiStatic.scaleY;
 	uiStatic.width = width / uiStatic.scaleX;
+
+	// A7 build 130 (round 131, user: menu rows look "cut at the left edge"):
+	// one-shot geometry dump. The code guarantees xOffset >= 0 (it is the
+	// safe-area inset divided by the scale), so either the device reports
+	// insets that make it draw way off, or the screenshot crop lies - this
+	// line settles it from a single engine.log.
+	{
+		static bool loggedLayout = false;
+		if( !loggedLayout )
+		{
+			loggedLayout = true;
+			Con_Printf( "[A7] build130: layout screen %dx%d safe L%d T%d R%d B%d "
+				"scale %.4f x %.4f off %d,%d uiw %d\n",
+				(int)ScreenWidth, (int)ScreenHeight,
+				uiStatic.safeLeft, uiStatic.safeTop,
+				uiStatic.safeRight, uiStatic.safeBottom,
+				uiStatic.scaleX, uiStatic.scaleY,
+				uiStatic.xOffset, uiStatic.yOffset,
+				uiStatic.width );
+		}
+	}
+
 	// move cursor to screen center
 	uiStatic.cursorX = ScreenWidth / 2;
 	uiStatic.cursorY = ScreenHeight / 2;
