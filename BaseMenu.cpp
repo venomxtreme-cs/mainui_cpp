@@ -410,43 +410,86 @@ int UI_DrawString( HFont font, int x, int y, int w, int h,
 	// string must live below bit 48 - reject anything else and draw
 	// nothing rather than crash the browser (user: "crash when view
 	// game servers").
-	if( !string || string < (const char *)0x1000 || ( (uintptr_t)string >> 48 ) != 0 || !string[0] )
+	// A7 build 132 (round 133): TWO bugs, both proven from build 131's device
+	// log + a disassembly of the shipped libmenu_android_arm64.so.
+	//
+	// 1) MISSING LABELS - the round-128 canonical test rejects LEGIT strings.
+	//    Android tags every heap pointer (Scudo/MTE, top byte 0xb4...) and the
+	//    hardware ignores that byte (TBI), so a real localization/buffer
+	//    pointer reads 0xb40000751ecd8930 and bits 48..63 are NOT zero.
+	//    engine.log line 377: "reason=high ptr=0xb40000751ecd8930 screen
+	//    50,781 787x36" is EXACTLY the 'New Game' rect from the build131 row
+	//    dump, and the screenshot shows precisely the L() labels missing
+	//    (New Game / Options / Quit) while the literals (Random server, Find
+	//    Servers, Console, Friends) draw. Same rule blanks every Find Servers
+	//    row: servers[line].name is a char[64] INSIDE a heap vector, so its
+	//    address is tagged too - that is why the browser "didn't change".
+	//    Strip the tag byte first; the address the CPU can actually touch is
+	//    the low 56 bits (on 32-bit builds the constant truncates to 0 and
+	//    the mask becomes ~0u, i.e. a no-op, which also makes the >>48 read
+	//    below a legal 64-bit shift instead of a shift-count warning).
+	//
+	// 2) CRASH - build 131 split empty-vs-bad INSIDE the refusal branch, so
+	//    the compiler loaded string[0] for a pointer that had ALREADY been
+	//    rejected (objdump of the shipped lib: refusal join -> cbz x21 ->
+	//    ldrb [x21] at UI_DrawString+0x88) and the browser's stale cell
+	//    pointer 0x64696f00000000 faulted again - the exact crash build 127
+	//    had fixed (log tail: CMenuTable::DrawLine+0x3c0 ->
+	//    UI_DrawString+0x88). Decide FIRST, dereference only afterwards.
+	const uintptr_t rawPtr = (uintptr_t)string;
+	const uintptr_t addr = rawPtr & ~(uintptr_t)0xFF00000000000000ULL;
+	const unsigned long long canon = (unsigned long long)addr;
+	const bool bNull = ( string == NULL );
+	const bool bLow = !bNull && addr < 0x1000;
+	const bool bHigh = !bNull && ( canon >> 48 ) != 0;
+
+	if( bNull || bLow || bHigh )
 	{
 		// build 127: one-shot breadcrumb so the scan can prove the guard is
 		// in the shipped .so the first time it actually fires in the field.
-		//
-		// A7 build 131 (round 132): the old line called EVERY refusal
-		// "non-canonical", but this condition also fires for a plain EMPTY
-		// string - and an empty string is what a BLANK menu row actually is
-		// (round 130 proved the localization files ship no empty values, so
-		// whatever printed at engine.log line 367 was either an empty name
-		// or real garbage). Split the two cases and print WHERE the draw was
-		// attempted: the screen rect pairs with the [A7] build131: row dump
-		// from CMenuMain::VidInit, so one engine.log names the label and the
-		// case instead of only "something was refused".
+		// NO dereference of `string` here on purpose (see bug 2 above): the
+		// pointer is already proven unusable, so only its raw and masked
+		// values are printed - with WHERE the draw was attempted, which pairs
+		// with the [A7] build131: row dump from CMenuMain::VidInit.
 		static bool bBadStringWarned;
-		static bool bEmptyStringWarned;
 
-		if( !string )
-		{
-			// NULL: nothing was ever drawn, keep the original silence
-		}
-		else if( !string[0] )
-		{
-			if( !bEmptyStringWarned )
-			{
-				bEmptyStringWarned = true;
-				Con_Printf( "[A7] build131: UI_DrawString refused an EMPTY string at screen %d,%d "
-					"%dx%d charH %d (blank label, not a bad pointer)\n", x, y, w, h, charH );
-			}
-		}
-		else if( !bBadStringWarned )
+		if( !bBadStringWarned )
 		{
 			bBadStringWarned = true;
 			Con_Printf( "[A7] build127: UI_DrawString refused a non-canonical string ptr (crash guard) "
-				"- reason=%s ptr=%p screen %d,%d %dx%d\n",
-				string < (const char *)0x1000 ? "low" : "high",
-				(const void *)string, x, y, w, h );
+				"- build132: reason=%s raw=%p masked=%p screen %d,%d %dx%d\n",
+				bNull ? "null" : ( bLow ? "low" : "high" ),
+				(const void *)rawPtr, (const void *)addr, x, y, w, h );
+		}
+		return x;
+	}
+
+	// build 132: one-shot proof in the field that the tag byte is being
+	// stripped - the first Android heap string that used to be thrown away
+	// (a localized label, a server row) logs here and then draws.
+	static bool bTagMaskAccepted;
+
+	if( !bTagMaskAccepted && addr != rawPtr )
+	{
+		bTagMaskAccepted = true;
+		Con_Printf( "[A7] build132: UI_DrawString accepted a tag-masked heap string "
+			"raw=%p -> %p (Android tag byte stripped) screen %d,%d\n",
+			(const void *)rawPtr, (const void *)addr, x, y );
+	}
+
+	if( !string[0] )
+	{
+		// safe now: the pointer passed the range test above, so reading the
+		// first byte cannot fault on a non-canonical address. An empty value
+		// is a BLANK row (round 130 proved the shipped files carry none) -
+		// name it and draw nothing.
+		static bool bEmptyStringWarned;
+
+		if( !bEmptyStringWarned )
+		{
+			bEmptyStringWarned = true;
+			Con_Printf( "[A7] build131: UI_DrawString refused an EMPTY string at screen %d,%d "
+				"%dx%d charH %d (blank label, not a bad pointer)\n", x, y, w, h, charH );
 		}
 		return x;
 	}
