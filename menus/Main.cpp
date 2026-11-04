@@ -361,6 +361,53 @@ void CMenuMain::VidInit( bool connected )
 	randomServer.SetVisibility( !connected );
 	configuration.SetVisibility( true );
 	consoleButton.SetVisibility( true );
+
+	// A7 build 131 (round 132, user: rows look "cut at the left edge"):
+	// the build-130 dump printed only the COLUMN numbers (x/ygap/y0/size),
+	// never where a single row finally lands on the device. CalcPosition()
+	// renders every item at pos * scale + window offset, so this prints the
+	// exact rect the renderer uses for each row - if the screen x is a
+	// healthy value on the device's real width, the layout is innocent and
+	// the missing first letters happen further down (crop, overlay, or the
+	// string itself). It also pairs with the [A7] build131 refusal line in
+	// UI_DrawString, which prints the screen rect it refused at: matching
+	// that rect against these lines NAMES the label. Logs only.
+	{
+		static bool loggedRowRects = false;
+
+		if( !loggedRowRects )
+		{
+			loggedRowRects = true;
+
+			#define A7_LOG_ROW( item ) do { \
+				const CMenuBaseItem *row = &(item); \
+				Con_Printf( "[A7] build131: row '%s' menu %d,%d %dx%d vis=%d " \
+					"-> screen %d,%d %dx%d (screenW %d scale %.4f off %d,%d)\n", \
+					row->szName ? row->szName : "", \
+					row->pos.x, row->pos.y, row->size.w, row->size.h, \
+					row->IsVisible() ? 1 : 0, \
+					(int)( row->pos.x * uiStatic.scaleX + uiStatic.xOffset ), \
+					(int)( row->pos.y * uiStatic.scaleY + uiStatic.yOffset ), \
+					(int)( row->size.w * uiStatic.scaleX ), \
+					(int)( row->size.h * uiStatic.scaleY ), \
+					(int)ScreenWidth, uiStatic.scaleX, \
+					uiStatic.xOffset, uiStatic.yOffset ); \
+			} while(0)
+
+			A7_LOG_ROW( resumeGame );
+			A7_LOG_ROW( disconnect );
+			A7_LOG_ROW( playerList );
+			A7_LOG_ROW( randomServer );
+			A7_LOG_ROW( newGame );
+			A7_LOG_ROW( findServers );
+			A7_LOG_ROW( configuration );
+			A7_LOG_ROW( quit );
+			A7_LOG_ROW( consoleButton );
+			A7_LOG_ROW( friendsButton );
+
+			#undef A7_LOG_ROW
+		}
+	}
 }
 
 void CMenuMain::_VidInit()

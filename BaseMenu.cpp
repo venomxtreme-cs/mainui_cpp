@@ -414,11 +414,39 @@ int UI_DrawString( HFont font, int x, int y, int w, int h,
 	{
 		// build 127: one-shot breadcrumb so the scan can prove the guard is
 		// in the shipped .so the first time it actually fires in the field.
+		//
+		// A7 build 131 (round 132): the old line called EVERY refusal
+		// "non-canonical", but this condition also fires for a plain EMPTY
+		// string - and an empty string is what a BLANK menu row actually is
+		// (round 130 proved the localization files ship no empty values, so
+		// whatever printed at engine.log line 367 was either an empty name
+		// or real garbage). Split the two cases and print WHERE the draw was
+		// attempted: the screen rect pairs with the [A7] build131: row dump
+		// from CMenuMain::VidInit, so one engine.log names the label and the
+		// case instead of only "something was refused".
 		static bool bBadStringWarned;
-		if( !bBadStringWarned && string )
+		static bool bEmptyStringWarned;
+
+		if( !string )
+		{
+			// NULL: nothing was ever drawn, keep the original silence
+		}
+		else if( !string[0] )
+		{
+			if( !bEmptyStringWarned )
+			{
+				bEmptyStringWarned = true;
+				Con_Printf( "[A7] build131: UI_DrawString refused an EMPTY string at screen %d,%d "
+					"%dx%d charH %d (blank label, not a bad pointer)\n", x, y, w, h, charH );
+			}
+		}
+		else if( !bBadStringWarned )
 		{
 			bBadStringWarned = true;
-			Con_Printf( "[A7] build127: UI_DrawString refused a non-canonical string ptr (crash guard)\n" );
+			Con_Printf( "[A7] build127: UI_DrawString refused a non-canonical string ptr (crash guard) "
+				"- reason=%s ptr=%p screen %d,%d %dx%d\n",
+				string < (const char *)0x1000 ? "low" : "high",
+				(const void *)string, x, y, w, h );
 		}
 		return x;
 	}
