@@ -82,7 +82,28 @@ const char *L( const char *szStr ) // L means Localize!
 		int i = hashed_cmds.Find( szStr );
 
 		if( i != hashed_cmds.InvalidIndex() )
-			return hashed_cmds[i];
+		{
+			const char *value = hashed_cmds[i];
+
+			// build129 (round 130): a dict HIT whose value is empty used to
+			// come back as "" and UI_DrawString refuses empty strings, so
+			// every menu label keyed on it drew NOTHING (the round-130
+			// "menu text is blank" report). Log the first offender once and
+			// fall back to the raw token: a dict MISS already returns the
+			// raw token, so a readable key beats an invisible label.
+			if( value && value[0] )
+				return value;
+
+			static bool warnedEmptyValue = false;
+
+			if( !warnedEmptyValue )
+			{
+				warnedEmptyValue = true;
+				Con_Printf( "[A7] build129: empty localized value for \"%s\", using raw key\n", szStr );
+			}
+
+			return szStr;
+		}
 	}
 
 	return szStr;
@@ -318,6 +339,8 @@ static void Localize_AddToDictionary( const char *name, const char *lang )
 	char filename[64], token[4096];
 	char *pfile, *afile = nullptr, *pFileBuf;
 	int i = 0, buflen, charlen;
+	int empties = 0;                 // build129: tokens whose value parsed empty
+	char firstEmpty[128] = "";       // build129: the first such key
 	bool isUtf16 = false;
 
 	snprintf( filename, sizeof( filename ), "resource/%s_%s.txt", name, lang );
@@ -443,8 +466,28 @@ static void Localize_AddToDictionary( const char *name, const char *lang )
 			Localize_ProcessString( szLocString, szLocString );
 			Dictionary_Insert( token, szLocString );
 			i++;
+
+			// build129 (round 130): remember the first key whose value came
+			// back empty - an inserted "" is exactly what blanks the menu
+			// labels (L() then returns it for every label keyed on it)
+			if( !szLocString[0] )
+			{
+				if( !empties )
+					snprintf( firstEmpty, sizeof( firstEmpty ), "%s", token );
+				empties++;
+			}
 		}
 	}
+
+	// build129 (round 130): per-file score line. A file that parses fine but
+	// yields empty values is the blank-menu culprit, so name the file, how
+	// many strings it contributed and the first empty key: engine.log then
+	// points straight at the offending localization file.
+	if( empties )
+		Con_Printf( "build129: Localize_AddToDict( %s ): %d strings, %d EMPTY values, first empty key \"%s\"\n",
+			filename, i, empties, firstEmpty );
+	else
+		Con_Printf( "Localize_AddToDict( %s ): %d strings\n", filename, i );
 
 error:
 	if( isUtf16 && afile )
