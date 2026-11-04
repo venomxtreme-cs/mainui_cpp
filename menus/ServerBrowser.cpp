@@ -1498,11 +1498,19 @@ void CMenuServerBrowser::_Init( void )
 	// text is refreshed with the live row count from the model's Update().
 	gameList.SetupColumn( COLUMN_PASSWORD, NULL, 32.0f, true );
 	gameList.SetupColumn( COLUMN_FAVORITE, NULL, 32.0f, true );
-	gameList.SetupColumn( COLUMN_PLAYERS, L( "Players" ), 110.0f, true );
-	gameList.SetupColumn( COLUMN_NAME, "Servers (0)", 0.34f );
-	gameList.SetupColumn( COLUMN_GAME, L( "Game" ), 0.16f );
+	// A7 build 134 (round 135, user: "fix find servers texts stucks ...
+	// correct names ... just like goldsource"): the name column now takes
+	// 0.40 of the free space instead of 0.34 (and 57% of it instead of
+	// 51%) and two fixed columns give 40 design px back, so a real server
+	// name fits before anything has to be cut at the column edge. "Players"
+	// 110 -> 90 still holds "14 / 32" at the small font, "Latency" 90 -> 80
+	// still holds 4 digits; Game 0.16 -> 0.14 because it only ever prints
+	// "cstrike"/"valve".
+	gameList.SetupColumn( COLUMN_PLAYERS, L( "Players" ), 90.0f, true );
+	gameList.SetupColumn( COLUMN_NAME, "Servers (0)", 0.40f );
+	gameList.SetupColumn( COLUMN_GAME, L( "Game" ), 0.14f );
 	gameList.SetupColumn( COLUMN_MAP, L( "GameUI_Map" ), 0.16f );
-	gameList.SetupColumn( COLUMN_PING, L( "Latency" ), 90.0f, true );
+	gameList.SetupColumn( COLUMN_PING, L( "Latency" ), 80.0f, true );
 	gameList.SetupColumn( COLUMN_IP, L( "IP" ), 0, true );
 	// A7 build 127 (round 128): one-shot proof the GoldSource column layout
 	// shipped into libmenu (scan marker).
@@ -1513,6 +1521,19 @@ void CMenuServerBrowser::_Init( void )
 		{
 			a7_browserColsLogged = 1;
 			Con_Printf( "[A7] build127: goldsource server columns (Players | Servers (N) | Game | Map | Latency)\n" );
+		}
+	}
+	// A7 build 134 (round 135): one-shot proof the GoldSource cell-clip rule
+	// shipped into libmenu (scan marker) - cells draw the whole string and
+	// are cut at the column edge instead of being ellipsised mid-word, and
+	// the name column carries the new 0.40/90/0.14/80 widths.
+	{
+		static int a7_cellClipLogged = 0;
+
+		if( !a7_cellClipLogged )
+		{
+			a7_cellClipLogged = 1;
+			Con_Printf( "[A7] build134: goldsource cell clip (full text cut at column edge, name col 0.40) + utf8 continuation guard\n" );
 		}
 	}
 	gameList.SetModel( &gameListModel );

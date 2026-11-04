@@ -613,6 +613,19 @@ void CMenuTable::DrawLine( Point p, int line, uint textColor, bool forceCol, uin
 			Size contentSize = sz;
 			contentSize.h = m_scChSize;
 
+			// A7 build 134 (round 135, user: "fix find servers texts stucks
+			// ... correct names ... just like goldsource"): cells draw the
+			// WHOLE string and are clipped at the column edge, exactly like
+			// the original browser. The default path handed UI_DrawString the
+			// column width (contentSize.h == one line, so the word-wrap
+			// branch was dead) and it therefore ellipsised - and because the
+			// cut point is remembered per character, the cut landed MID-WORD
+			// ("whatever fits...") or, for a column too narrow even for "...",
+			// hard-cut with no dots at all - that is the "stuck" text.
+			// The per-column scissor keeps a long name inside its own column
+			// (the body scissor at the end of Draw() only covers the table).
+			UI::Scissor::PushScissor( p, sz );
+
 			UI_DrawString(
 				font,
 				contentPos,
@@ -621,8 +634,10 @@ void CMenuTable::DrawLine( Point p, int line, uint textColor, bool forceCol, uin
 				textColor,
 				m_scChSize,
 				m_pModel->GetAlignmentForColumn( i ),
-				textflags | ( m_pModel->IsCellTextWrapped( line, i ) ? 0 : ETF_NOSIZELIMIT )
+				textflags | ETF_NOSIZELIMIT
 			);
+
+			UI::Scissor::PopScissor();
 
 			break;
 		}

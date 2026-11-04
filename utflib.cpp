@@ -53,10 +53,20 @@ uint32_t Q_DecodeUTF8( utfstate_t *s, uint32_t in )
 	}
 
 	// invalid sequence, reset
-	if( unlikely( in > 0xbfu ))
+	//
+	// A7 build 134 (round 135): a continuation byte is 0x80..0xBF and NOTHING
+	// else. The old test only rejected in > 0xBF, so every plain ASCII byte
+	// (0x00..0x7F) after a non-UTF-8 lead - a cp1251/ANSI byte in a server
+	// name - was consumed as a "continuation": '<' (0x3C), '>' (0x3E) and
+	// ')' (0x29) all vanished from server names, exactly the user's
+	// "correct names with support other text have like < ) whatever is just
+	// like goldsource". Reject the byte and hand it straight back as a fresh
+	// character (ASCII returns itself, a real lead restarts the sequence), so
+	// nothing after a bad lead is ever swallowed.
+	if( unlikely( in < 0x80u || in > 0xbfu ))
 	{
 		s->len = 0;
-		return 0;
+		return Q_DecodeUTF8( s, in );
 	}
 
 	s->uc <<= 6;
