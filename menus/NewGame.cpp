@@ -79,6 +79,12 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 // not found" and be dropped. So nothing on the Bots page is LinkCvar'd: the
 // number lives in settings.scr through UI_SetScriptCvar and is pushed to the
 // console from StartGame(), AFTER the server is up (see the comment there).
+//
+// build 135 (item 8): `bot_add_allowed` joins that push - it is the game
+// DLL's master gate for CPU players (console bot_add/bot_add_t/bot_add_ct
+// are refused and quota maintenance clamps to 0 while it reads 0), so the
+// "Include CPU players" tick now holds even against stale bot_quota values
+// in configs and against script calls, which bot_quota 0 alone did not.
 
 #include "CheckBox.h"
 #include "EventSystem.h"
@@ -224,6 +230,12 @@ public:
 	// bot_quota semantics: 0 while the box is unticked, else the count
 	int  BotQuota( void );
 
+	// A7 build 135 (item 8, user: "include CPU players off must really
+	// keep bots out"): the raw "Include CPU players" tick - StartGame needs
+	// it independently of the quota (the gate is bot_add_allowed, which
+	// blocks console bot_add* too, not only the quota count)
+	bool IncludeBots( void ) const { return includeBots.bChecked; }
+
 	// build 90: settings.scr ONLY - never an engine cvar (see the file
 	// header: bot_quota/bot_difficulty do not exist in the menu)
 	void SaveSettings( void );
@@ -312,49 +324,43 @@ private:
 ================
 CMenuNewGameMapModel::Update
 
-build 90: CreateGame's model, slow-open fixed. The heavy part is the engine
-filesystem walk; it now only runs when the engine says the set of maps
-changed (uiStatic.needMapListUpdate), otherwise the maps.lst written last time
-is parsed straight from disk (Cmd_CheckMapsList(0) short-circuits when the
-file is there, so CreateMapsList(0) does not search the game dir either).
+build 90: CreateGame's model, slow-open fixed (opens inside one session
+serve from the m_bBuilt cache).
+
+build 135 (item 7, user: "New Game doesn't find all maps"): the session-FIRST
+build no longer reuses a maps.lst it finds on disk. That file lives in
+/sdcard across installs and release updates while uiStatic.needMapListUpdate
+only rises after an in-game BSP download - so the list used to freeze at
+whatever was scanned once (or written by an older release) and every map
+added afterwards was missing from this dialog for good. The first build of a
+session now always rescans for real (CreateMapsList(1)), and every later open
+in that session still hits the cache above, the slow-open fix intact.
 ================
 */
 void CMenuNewGameMapModel::Update( void )
 {
 	char *afile;
 
-	// build 90: cached - the normal open path does no work at all
+	// build 90: cached - every open after the first one in this session
+	// (and after an in-game download) does no work at all
 	if( m_bBuilt && !uiStatic.needMapListUpdate )
 		return;
 
-	// a refresh (rescan + maps.lst rewrite) only after a game or when there
-	// is no list to reuse yet; otherwise reuse what is on disk
-	int fRefresh = uiStatic.needMapListUpdate ? 1 : 0;
-
+	// session-first build (or a download raised the flag): this is the ONLY
+	// place that rescans - a miss here means the game has no levels at all,
+	// never "reuse whatever file is on disk"
 	RemoveAll();
 
-	if( !EngFuncs::CreateMapsList( fRefresh ) || ( afile = (char *)EngFuncs::COM_LoadFile( "maps.lst", NULL ) ) == NULL )
+	if( !EngFuncs::CreateMapsList( 1 ) || ( afile = (char *)EngFuncs::COM_LoadFile( "maps.lst", NULL ) ) == NULL )
 	{
-		if( fRefresh )
-		{
-			// real attempt already made: no levels in this game at all
-			Con_Printf( "Cmd_GetMapsList: can't open maps.lst\n" );
-			if( parent->startBtn )
-				parent->startBtn->SetGrayed( true );
-			return;
-		}
-
-		// no maps.lst to reuse (fresh install) - pay for the scan once
-		uiStatic.needMapListUpdate = true;
-
-		if( !EngFuncs::CreateMapsList( 1 ) || ( afile = (char *)EngFuncs::COM_LoadFile( "maps.lst", NULL ) ) == NULL )
-		{
-			Con_Printf( "Cmd_GetMapsList: can't open maps.lst\n" );
-			if( parent->startBtn )
-				parent->startBtn->SetGrayed( true );
-			return;
-		}
+		Con_Printf( "Cmd_GetMapsList: can't open maps.lst\n" );
+		if( parent->startBtn )
+			parent->startBtn->SetGrayed( true );
+		return;
 	}
+
+	if( !m_bBuilt )
+		Con_Printf( "[A7] build135: New Game map list rescanned (session-first scan, stale maps.lst dropped)\n" );
 
 	// build 90: no "Random map" row here - New Game must start the level that
 	// is selected on this tab (see the model comment)
@@ -374,9 +380,10 @@ void CMenuNewGameMapModel::Update( void )
 		}
 		Q_strncpy( map.desc, token, sizeof( map.desc ));
 
-		if( !strncmp( map.name, "tr_", 3 ))
-			continue;
-
+		// A7 build 135 (item 7): no prefix hiding any more - "New Game
+		// doesn't find all maps" - every level maps.lst reports lands on
+		// the list (Start still refuses an invalid one through
+		// SelectedMap() -> IsMapValid)
 		AddToTail( map );
 	}
 
@@ -771,11 +778,38 @@ void CMenuNewGame::StartGame( uintptr_t skill )
 	// assignment lands on the real cvars. In a build without bots the names
 	// are unknown commands and stay silent: no half-made cvar can block the
 	// DLL registration (fwgs Cvar_Set never creates a variable).
+	//
+	// A7 build 135 (item 8, user: "include CPU players off must really keep
+	// bots out - bot_add must not force bots while the box is off"): the
+	// push now also carries bot_add_allowed, the ReGameDLL-side master gate.
+	// While OFF: bot_add_allowed 0 + bot_quota 0 (double lock - the new
+	// gate refuses console bot_add/bot_add_t/bot_add_ct and clamps quota
+	// maintenance to 0, and the quota itself reads 0 anyway), so nothing
+	// from a config or a script can push CPU players back in. While ON:
+	// bot_add_allowed 1 + the chosen count/difficulty, restoring the gate
+	// after a previous game turned it off. It is pushed AFTER admission is
+	// handled on the server's console (Bot_RegisterCVars already ran by the
+	// third wait), same handshake as bot_quota.
 	if( WasInit() )
 	{
-		char botCmd[160];
-		snprintf( botCmd, sizeof( botCmd ), "wait; wait; wait; bot_quota %d; bot_difficulty %d\n",
-			botsPage.BotQuota(), botsPage.Difficulty() );
+		char botCmd[192];
+
+		if( botsPage.IncludeBots() )
+		{
+			snprintf( botCmd, sizeof( botCmd ),
+				"wait; wait; wait; bot_add_allowed 1; bot_quota %d; bot_difficulty %d\n",
+				botsPage.BotQuota(), botsPage.Difficulty() );
+			Con_Printf( "[A7] build135: bot gate ON (bot_add_allowed 1, bot_quota %d, bot_difficulty %d)\n",
+				botsPage.BotQuota(), botsPage.Difficulty() );
+		}
+		else
+		{
+			snprintf( botCmd, sizeof( botCmd ),
+				"wait; wait; wait; bot_add_allowed 0; bot_quota 0; bot_difficulty %d\n",
+				botsPage.Difficulty() );
+			Con_Printf( "[A7] build135: bot gate OFF (bot_add_allowed 0, bot_quota locked at 0 - console bot_add* refused too)\n" );
+		}
+
 		EngFuncs::ClientCmd( false, botCmd );
 	}
 }
