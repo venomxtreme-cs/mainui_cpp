@@ -143,6 +143,17 @@ public:
 	void ParseLogoColorCvar();
 	void WriteLogoColorCvar();
 
+	// A7 build 136 (user: "when it [steam login] is connected it should
+	// change [to the] id - steam id with correct logo ... in options"):
+	// the Steam account row under the crosshair column shows the stored
+	// SteamID64 (friends/steamid.txt, written by the SteamFriends web
+	// screen) plus the Steam avatar when one exists, and clicking it runs
+	// the engine's "steamfriends" command
+	void UpdateSteam();
+	CMenuAction secSteam;
+	CMenuAction steamRow;
+	CMenuBitmap steamPic;
+
 	// same shape as CMenuPlayerSetup's list: logos/*.bmp|*.png, no remapped
 	class CLogosListModel : public CStringVectorModel
 	{
@@ -744,6 +755,72 @@ bool CMenuOptionsMPPage::Save()
 	return true;
 }
 
+// A7 build 136 (item 1, user: "when it is connected it should change to
+// the Steam id with correct logo ... in options"): open the Steam
+// sign-in/friends screen from the Options row. The engine registers the
+// command on Android only (engine/platform/android/android.c,
+// Cmd_AddCommand "steamfriends" -> XashActivity.openSteamFriends)
+static void SteamFriendsOpen( void )
+{
+	EngFuncs::ClientCmd( false, "steamfriends\n" );
+}
+
+// Fill the Steam account row from the two files the launcher-side
+// SteamFriends screen writes on sign-in: friends/steamid.txt (the id)
+// and media/avatars/avatar_self.png (that account's avatar - the
+// "correct logo" beside the id). Not signed in: plain prompt text, no
+// picture, so the row never pretends.
+void CMenuOptionsMPPage::UpdateSteam()
+{
+	char id[64];
+	int len = 0;
+	id[0] = '\0';
+
+	void *buf = EngFuncs::COM_LoadFile( "friends/steamid.txt", &len );
+	if( buf )
+	{
+		char *s = (char *)buf;
+
+		while( *s == ' ' || *s == '\t' || *s == '\r' || *s == '\n' )
+			s++;
+
+		size_t n = strlen( s );
+		while( n && ( s[n-1] == ' ' || s[n-1] == '\t' || s[n-1] == '\r' || s[n-1] == '\n' ))
+			n--;
+		if( n >= sizeof( id ))
+			n = sizeof( id ) - 1;
+		memcpy( id, s, n );
+		id[n] = '\0';
+
+		EngFuncs::COM_FreeFile( buf );
+	}
+
+	// reload-safe: drop the old handle before re-binding below
+	EngFuncs::PIC_Free( "media/avatars/avatar_self.png" );
+
+	// CMenuBitmap has no hImage member (build 136 first attempt used my
+	// own preview class' field) - it binds through SetPicture, and when
+	// there is no picture to show colorBase = 0 keeps Draw() from
+	// painting an empty box (Bitmap.cpp skips the fill then)
+	bool haveAvatar = EngFuncs::FileExists( "media/avatars/avatar_self.png" );
+	steamPic.SetPicture( "media/avatars/avatar_self.png" );
+	steamPic.colorBase = ( id[0] && haveAvatar ) ? (unsigned int)uiColorWhite : 0u;
+
+	if( id[0] )
+	{
+		char text[96];
+		snprintf( text, sizeof( text ), "Steam ID: %s (click to open)", id );
+		steamRow.SetText( text );
+
+		Con_Printf( "[A7] build136: steam row signed in (%s)\n", id );
+	}
+	else
+	{
+		steamRow.SetText( "Steam: not signed in - click to sign in with Steam" );
+		Con_Printf( "[A7] build136: steam row not signed in\n" );
+	}
+}
+
 void CMenuOptionsMPPage::_Init()
 {
 	static const char *itemlist[V_ARRAYSIZE( g_CrosshairColors )];
@@ -808,6 +885,17 @@ void CMenuOptionsMPPage::_Init()
 	sprayNote1.szName = "Changes apply when you join a new server.";
 	sprayNote1.SetRect( 16, 230, 560, 24 );
 
+	SectionHeader( secSteam, "Steam account", 600, 300, 440 );
+
+	steamPic.SetPicture( "media/avatars/avatar_self.png" );
+	steamPic.colorBase = 0; // until UpdateSteam() decides (just below)
+	steamPic.SetRect( 600, 332, 56, 56 );
+
+	steamRow.SetRect( 668, 344, 372, 32 );
+	steamRow.szStatusText = "Open the Steam sign-in / friends screen";
+	steamRow.onReleased = SteamFriendsOpen;
+	UpdateSteam();
+
 	// right column: crosshair appearance (picture's Multiplayer tab).
 	// A7 build 87: re-pitched so every label clears the control above it
 	// (header 16..40, size label 52..78, color label 135..161)
@@ -850,6 +938,10 @@ void CMenuOptionsMPPage::_Init()
 	AddItem( color );
 	AddItem( translucent );
 	AddItem( preview );
+	// A7 build 136 (item 1): the Steam account row
+	AddItem( secSteam );
+	AddItem( steamPic );
+	AddItem( steamRow );
 }
 
 void CMenuOptionsMPPage::Reload()
@@ -873,6 +965,10 @@ void CMenuOptionsMPPage::Reload()
 	avatarImage.horizontal = NULL;
 	EnsurePlayerLogo();
 	UpdateAvatar();
+
+	// A7 build 136 (item 1): re-read friends/steamid.txt so signing in
+	// (or out) through the Steam screen shows up on the next open
+	UpdateSteam();
 }
 
 /*

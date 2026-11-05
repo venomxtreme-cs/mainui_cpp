@@ -643,12 +643,24 @@ void CMenuFramework::ApplyFloatLayout()
 	}
 
 	// build 90: right-aligned dialogs (Options, New Game, Player list)
-	// are not centered - pull them as far right as padding allows so the
-	// main-menu column (x36..~200) stays fully visible behind them like
-	// the reference screenshots. NOTE: a later VidInit re-places them at
-	// the right edge (drag persistence is not kept for these).
-	if( m_bFloatRightAlign && dxMax >= dxMin )
-		dx = dxMax;
+	// were pulled to the right edge so the main-menu column stayed visible
+	// behind them. A7 build 136 (user: "ingame, change place open menu like
+	// options in the middle - all of them"): that pull is GONE. The block
+	// below already solved fx to the horizontal centre of the screen, so
+	// simply keeping dx means EVERY floating dialog now opens dead-centre,
+	// in-game (ESC menu) and out, exactly like the user asked. The
+	// m_bFloatRightAlign flag stays (drag clamp above still uses the
+	// padding limits) but no longer moves anything.
+	if( m_bFloatRightAlign )
+	{
+		static bool s_centeredLogged = false;
+
+		if( !s_centeredLogged )
+		{
+			s_centeredLogged = true;
+			Con_Printf( "[A7] build136: right-aligned dialogs now open in the middle (Options / New Game / Player list)\n" );
+		}
+	}
 
 	// store the offset, then recompose the whole render tree with it -
 	// no logical coordinates are touched

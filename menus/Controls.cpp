@@ -255,7 +255,12 @@ void CMenuControls::_Init( void )
 
 void CMenuControls::_VidInit()
 {
-	msgBox1.SetRect( DLG_X + 192, 256, 640, 128 );
+	// A7 build 136 (user: "open menu ... in the middle, all of them"):
+	// y was a fixed 256 while the 128-tall box centres at (768-128)/2 =
+	// 320 - the box sat 64px high of centre like every other 640x128 /
+	// 640x256 / 640x384 dialog now does (YesNoMessageBox 256 for h=256,
+	// ConnectionWarning 192 for h=384 were already centre-solved)
+	msgBox1.SetRect( DLG_X + 192, ( 768 - 128 ) / 2, 640, 128 );
 	msgBox1.pos.x += uiStatic.xOffset;
 	msgBox1.pos.y += uiStatic.yOffset;
 
