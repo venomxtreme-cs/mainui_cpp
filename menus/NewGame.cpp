@@ -165,7 +165,8 @@ Map tab: map selector only (no Filter, no Location)
 class CMenuNewGameMapPage : public CMenuItemsHolder
 {
 public:
-	CMenuNewGameMapPage( CMenuNewGame *parent ) : mapsModel( parent ) { }
+	CMenuNewGameMapPage( CMenuNewGame *parent ) : mapsModel( parent ),
+		m_bScanPending( false ), m_bScanWasForced( false ) { }
 
 	// build 90: the level Start will launch - NULL when nothing selectable
 	// is on the tab (empty list / invalid entry)
@@ -174,11 +175,24 @@ public:
 private:
 	void _Init() override;
 	void Reload() override;
+	void Draw() override;
+	void RunPendingScan( void );
 
 	CMenuAction secMap;
 
 	CMenuTable           mapsList;
 	CMenuNewGameMapModel mapsModel;
+
+	// A7 build 138 (round 137 item 3, user: "fix new game also start show
+	// menu too late"): the session-first maps/*.bsp walk used to run in
+	// Init (SetModel -> model Update), i.e. INSIDE the tap that opens the
+	// dialog - the window could not be presented until the whole FUSE walk
+	// had finished. Armed, _Init suppresses that first walk and the real
+	// scan runs one frame later out of Draw(), while the New Game window
+	// is already on screen (SelectedMap() runs it inline if a tap beats
+	// that first frame).
+	bool m_bScanPending;
+	bool m_bScanWasForced;
 };
 
 /*
@@ -405,6 +419,11 @@ CMenuNewGameMapPage
 */
 const char *CMenuNewGameMapPage::SelectedMap( void )
 {
+	// A7 build 138 (item 3): a tap can beat the deferred first build
+	// (Start pressed while the list is still empty) - run the scan right
+	// here rather than refusing a valid Start on an empty model
+	RunPendingScan();
+
 	int item = mapsList.GetCurrentIndex();
 
 	if( !mapsModel.IsValidIndex( item ))
@@ -439,11 +458,63 @@ void CMenuNewGameMapPage::_Init( void )
 	mapsList.SetCharSize( QM_SMALLFONT );
 	mapsList.SetupColumn( 0, L( "GameUI_Map" ), 0.5f );
 	mapsList.SetupColumn( 1, L( "Title" ), 0.5f );
+
+	// A7 build 138 (round 137 item 3, "new game also start show menu too
+	// late"): SetModel() calls Update(), and Update()'s session-first rule
+	// means that FIRST build is a full maps/*.bsp walk through Android
+	// FUSE - it used to stall this very Init(), so the New Game window
+	// could not appear before it ended. Arm the model's own cache flags
+	// just for this call (both for a session-first build and for a raised
+	// uiStatic.needMapListUpdate after a download) so SetModel returns
+	// instantly; Draw() runs the real scan one frame later, when the
+	// window is already on screen, restoring both flags first so the
+	// "always rescan first, never trust a stale maps.lst" contract of
+	// build 135 stays intact.
+	m_bScanPending = !( mapsModel.m_bBuilt && !uiStatic.needMapListUpdate );
+	m_bScanWasForced = m_bScanPending && uiStatic.needMapListUpdate;
+	if( m_bScanPending )
+	{
+		mapsModel.m_bBuilt = true;             // arms Update()'s early-out
+		uiStatic.needMapListUpdate = false;    // consumed here, restored in RunPendingScan()
+	}
 	mapsList.SetModel( &mapsModel );   // may Update() here, footer exists already
 	mapsList.SetRect( 16, 54, 940, 328 );
 
 	AddItem( secMap );
 	AddItem( mapsList );
+}
+
+// A7 build 138 (item 3): the deferred session-first scan. Called after the
+// window has been presented (first Draw) or inline if a tap races it.
+void CMenuNewGameMapPage::RunPendingScan( void )
+{
+	if( !m_bScanPending )
+		return;
+
+	m_bScanPending = false;
+
+	const int t0 = uiStatic.realTime;
+
+	mapsModel.m_bBuilt = false;                // the cache arm from _Init
+	if( m_bScanWasForced )
+		uiStatic.needMapListUpdate = true;     // restore the download flag
+	m_bScanWasForced = false;
+
+	mapsModel.Update();
+
+	Con_Printf( "[A7] build138: New Game window was presented first, deferred map scan ran (+%d ms, %d maps)\n",
+		uiStatic.realTime - t0, mapsModel.Count());
+}
+
+void CMenuNewGameMapPage::Draw( void )
+{
+	BaseClass::Draw();
+
+	// A7 build 138 (item 3): frame 1 shows the dialog shell without
+	// blocking the tap; the walked rows land on the flip after this - the
+	// scan's cost is paid VISIBLE (a brief fill after the window is up)
+	// instead of invisible (nothing at all while the FUSE walk runs)
+	RunPendingScan();
 }
 
 /*

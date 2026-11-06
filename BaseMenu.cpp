@@ -1234,6 +1234,20 @@ void UI_SetActiveMenu( int fActive )
 	{
 		EngFuncs::KEY_SetDest( KEY_MENU );
 		uiStatic.nextFrameActive = true; // main menu open moved to UI_UpdateMenu
+
+		// A7 build 138 (round 137 item 2, user: "start launch game still
+		// too late"): the tap timeline was missing its LAST leg. With this
+		// line's logcat timestamp against the launcher's "tap to
+		// startActivity" and XashActivity's "tap to engine onCreate"
+		// lines, the remaining wait splits into (a) Android activity +
+		// lib load and (b) engine boot -> GameUI, instead of one opaque
+		// gap that can only be guessed at.
+		static bool s_bGameUiReadyLogged = false;
+		if( !s_bGameUiReadyLogged )
+		{
+			s_bGameUiReadyLogged = true;
+			Con_Printf( "[A7] build138: GameUI activation requested (main menu opens next frame)\n" );
+		}
 	}
 	else
 	{

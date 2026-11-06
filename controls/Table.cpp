@@ -67,51 +67,7 @@ void CMenuTable::VidInit()
 			iTopItem = 0;
 	}
 
-	flFixedSumm = 0.0f;
-	flDynamicSumm = 0.0f;
-
-	for( int i = 0; i < m_pModel->GetColumns(); i++ )
-	{
-		// this isn't valid behaviour, but still enough for tables without
-		// set columns width
-		if( !columns[i].flWidth )
-		{
-			SetColumnWidth( i, 1 / m_pModel->GetColumns(), false );
-		}
-
-		if( columns[i].fStaticWidth )
-			flFixedSumm += columns[i].flWidth;
-		else
-			flDynamicSumm += columns[i].flWidth;
-	}
-
-	flFixedSumm *= uiStatic.scaleX;
-
-	// at first, determine header height
-	headerSize.h = m_scChSize * HEADER_HEIGHT_FRAC;
-
-	// then determine arrow position and sizes
-	if( bShowScrollBar )
-		arrow.w = arrow.h = 24;
-	else
-		arrow.w = arrow.h = 0;
-	arrow = arrow.Scale();
-	downArrow.x = upArrow.x = m_scPos.x + m_scSize.w - arrow.w + iStrokeWidth * 1;
-	upArrow.y = m_scPos.y - iStrokeWidth;
-	downArrow.y = upArrow.y + m_scSize.h - arrow.h + iStrokeWidth * 2;
-	if( !bFramedHintText )
-	{
-		upArrow.y += headerSize.h;
-	}
-
-	// calculate header size(position is table position)
-	headerSize.w = m_scSize.w - arrow.w + iStrokeWidth;
-
-	// box is lower than header
-	boxPos.x = m_scPos.x;
-	boxPos.y = m_scPos.y + headerSize.h;
-	boxSize.w = headerSize.w;
-	boxSize.h = m_scSize.h - headerSize.h;
+	RefreshGeometryAndSums();
 }
 
 // A7 build 62: box/arrow/header geometry is derived from the RENDER
@@ -125,12 +81,55 @@ void CMenuTable::CalcSizes( void )
 {
 	BaseClass::CalcSizes();
 
+	RefreshGeometryAndSums();
+}
+
+// A7 build 138 (round 137 item 5, user: the scoreboard header labels sit
+// ~190px right of their value columns and the header band overflows the
+// frame): everything below is derived state, and it used to be split -
+// VidInit computed the column sums, CalcSizes the box/header/arrow, and
+// each only when somebody ran them. The header line is drawn at the LIVE
+// m_scPos, but the frame, scrollbar and every row are drawn from the
+// cached boxPos/boxSize, so any float-layout/drag position change (or a
+// SetupColumn between VidInit and Draw - the Scoreboard re-sizes its two
+// static columns per row-height tier change) left the header on one origin
+// and the rows on another. Now VidInit, CalcSizes AND Draw() all funnel
+// through here, so header, frame and rows can never disagree.
+void CMenuTable::RefreshGeometryAndSums( void )
+{
+	// column sums from the CURRENT column widths (SetupColumn may have
+	// changed them after VidInit; CalcSizes can still run before a model
+	// is attached, hence the guard)
+	flFixedSumm = 0.0f;
+	flDynamicSumm = 0.0f;
+
+	if( m_pModel )
+	{
+		for( int i = 0; i < m_pModel->GetColumns(); i++ )
+		{
+			// this isn't valid behaviour, but still enough for tables
+			// without set columns width
+			if( !columns[i].flWidth )
+			{
+				SetColumnWidth( i, 1 / m_pModel->GetColumns(), false );
+			}
+
+			if( columns[i].fStaticWidth )
+				flFixedSumm += columns[i].flWidth;
+			else
+				flDynamicSumm += columns[i].flWidth;
+		}
+	}
+
+	flFixedSumm *= uiStatic.scaleX;
+
 	iStrokeWidth = uiStatic.outlineWidth;
 
 	// header height
 	headerSize.h = m_scChSize * HEADER_HEIGHT_FRAC;
 
-	// arrow position and sizes
+	// arrow position and sizes (idempotent: the size is reset to 24
+	// before every Scale(), so re-running this never doubles the arrow)
 	if( bShowScrollBar )
 		arrow.w = arrow.h = 24;
 	else
@@ -624,7 +623,22 @@ void CMenuTable::DrawLine( Point p, int line, uint textColor, bool forceCol, uin
 			// hard-cut with no dots at all - that is the "stuck" text.
 			// The per-column scissor keeps a long name inside its own column
 			// (the body scissor at the end of Draw() only covers the table).
-			UI::Scissor::PushScissor( p, sz );
+			//
+			// A7 build 138 (round 137 item 4, user: "fix fonts text _
+			// not show in menus"): the cell scissor used to be sized
+			// EXACTLY at the row height, and on the STB backend the Tahoma
+			// raster derives its scale from the hhea win metrics
+			// (ascent 2049 / descent -423), which puts the baseline at
+			// ~0.83 * (tall + 4) - i.e. the underscore lands 1-4 device px
+			// BELOW the m_scChSize line box (descender tails lose the same
+			// pixels). A row-height scissor therefore cut the entire glyph
+			// away: list entries like "de_dust2" / "config_backup" rendered
+			// "de dust2" with a gap. 5px of bottom allowance covers the
+			// worst case at every font tier; the next row's glyphs only
+			// start ~7px into their own row, so the slack can never touch
+			// them, and the body scissor at the end of Draw() still caps
+			// the table.
+			UI::Scissor::PushScissor( p, Size( sz.w, sz.h + 5 ));
 
 			UI_DrawString(
 				font,
@@ -790,6 +804,27 @@ void CMenuTable::Draw()
 	// A7: cs16 gold-olive selection fill (accent blended over secondary bg)
 	int selColor = PackRGB( 115, 114, 65 );
 	int upFocus, downFocus, scrollbarFocus;
+
+	// A7 build 138 (round 137 item 5, user: "in picture scoreboard command
+	// it show like that": the header labels HP/Money/Score/Deaths/Latency
+	// drew ~190px right of their value columns and overflowed the frame):
+	// the header line at DrawLine(m_scPos, ...) is the ONLY thing drawn at
+	// the live position - frame, scrollbar and rows all use the cached
+	// boxPos/boxSize/arrow/headerSize. Re-derive both (and the column sums
+	// SetupColumn may have changed) from wherever the table actually is
+	// this frame, so header and rows can never disagree again.
+	RefreshGeometryAndSums();
+
+	static bool s_bGeometryRefreshLogged = false;
+	if( !s_bGeometryRefreshLogged )
+	{
+		s_bGeometryRefreshLogged = true;
+		Con_Printf( "[A7] build138: table geometry refreshed in Draw (header + box follow m_scPos)\n" );
+		// round 137 item 4 proof: the cell scissor below carries the
+		// 5px descender allowance that keeps the STB-Tahoma underscore
+		// (drawn 1-4px below the line box) visible inside list rows
+		Con_Printf( "[A7] build138: table cells keep a 5px descender slack so '_' prints in lists\n" );
+	}
 
 	// Calculate the actual number of rows that fit in the table.
 	// Rows may have different heights, so using boxHeight / m_scChSize

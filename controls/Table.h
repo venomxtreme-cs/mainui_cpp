@@ -56,6 +56,15 @@ public:
 	void Draw() override;
 	void VidInit() override;
 	void CalcSizes() override;
+	// A7 build 138 (round 137 item 5, user: scoreboard header labels sit
+	// right of their value columns): derived geometry (stroke/header/box/
+	// arrows) and the flFixedSumm/flDynamicSumm column sums, re-derived
+	// from the live render position + current column widths. VidInit and
+	// CalcSizes call it, and Draw() re-runs it once at the top so the
+	// header band can never be drawn from a different position than the
+	// frame, scrollbar and rows (SetupColumn between VidInit and Draw used
+	// to leave both sums stale too).
+	void RefreshGeometryAndSums( void );
 	bool MouseMove( int x, int y ) override;
 	bool MoveView( int delta );
 	bool MoveCursor( int delta );
