@@ -20,6 +20,7 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 
 
 #include "Framework.h"
+#include "Utils.h"   // A7 build 139: UI_ApplySteamPersona in Show()
 #include "Action.h"
 #include "Bitmap.h"
 #include "PicButton.h"
@@ -69,6 +70,17 @@ public:
 	// A7 build 87: the only window that keeps the GameUI sound set -
 	// every other window uses the original GoldSource launch_* sounds
 	bool IsMainMenuRoot() const override { return true; }
+
+	// A7 build 139 (items 3+4): the main menu is the hub every new game
+	// or server join passes through, so a persona captured by the Steam
+	// sign-in screen while the game was running reaches the name cvar
+	// before the next session starts (two tiny reads; nothing happens
+	// unless friends/name.txt changed since the last apply)
+	void Show() override
+	{
+		CMenuFramework::Show();
+		UI_ApplySteamPersona();
+	}
 
 	void QuitDialogCb();
 

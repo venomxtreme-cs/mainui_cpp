@@ -1678,6 +1678,78 @@ static void UI_UpdateDialog_f( void )
 
 ADD_COMMAND( menu_updatedialog, UI_UpdateDialog_f );
 
+// ------------------------------------------------------------------
+// A7 build 139 (round 139 items 3+4): Steam sign-in -> game identity
+// ------------------------------------------------------------------
+
+/** read the first line of a gamedir file, trimmed; false when the file
+ *  is missing or empty (out is "" then). */
+static bool UI_ReadFirstLine( const char *path, char *out, size_t outsz )
+{
+	int len = 0;
+	void *buf = EngFuncs::COM_LoadFile( path, &len );
+	if( !buf )
+	{
+		out[0] = '\0';
+		return false;
+	}
+
+	char *s = (char *)buf;
+
+	while( *s == ' ' || *s == '\t' || *s == '\r' || *s == '\n' )
+		s++;
+
+	size_t n = strlen( s );
+	while( n && ( s[n-1] == ' ' || s[n-1] == '\t' || s[n-1] == '\r' || s[n-1] == '\n' ))
+		n--;
+	if( n >= outsz )
+		n = outsz - 1;
+	memcpy( out, s, n );
+	out[n] = '\0';
+
+	EngFuncs::COM_FreeFile( buf );
+	return out[0] != '\0';
+}
+
+// true while friends/steamid.txt is on disk - the SteamFriends screen
+// wrote it on sign-in (the launcher Settings card reads the same file).
+// While this holds the Steam photo owns the scoreboard avatar and the
+// "Import image..." path is refused (item 4: "if he use steam account
+// don't let him change avatar").
+bool UI_SteamSignedIn( void )
+{
+	char id[64];
+	return UI_ReadFirstLine( "friends/steamid.txt", id, sizeof( id ));
+}
+
+// items 3+4 (user: "when i connect to steam update steam id, avatar and
+// name also"): the SteamFriends screen saves the persona as
+// friends/name.txt whenever a sign-in actually changed it (Java compares
+// before writing), and this pushes it into the name cvar - the name the
+// game joins servers with IS the Steam name. friends/name_applied.txt
+// (written right after an apply, by COM_SaveFile) remembers which
+// persona was applied last, so a name the player typed BY HAND after
+// the sign-in is never stomped by a later call - only a NEW persona
+// (the next real sign-in) updates it.
+void UI_ApplySteamPersona( void )
+{
+	char persona[64], applied[64];
+
+	if( !UI_ReadFirstLine( "friends/name.txt", persona, sizeof( persona )))
+		return; // never signed in / no persona captured yet
+
+	if( !UI_ReadFirstLine( "friends/name_applied.txt", applied, sizeof( applied )))
+		applied[0] = '\0';
+
+	if( !strcmp( persona, applied ))
+		return; // this persona is applied already - hand edits survive
+
+	EngFuncs::CvarSetString( "name", persona );
+	EngFuncs::COM_SaveFile( "friends/name_applied.txt", persona, (int)strlen( persona ));
+
+	Con_Printf( "[A7] build139: steam persona applied to name (%s)\n", persona );
+}
+
 /*
 =================
 UI_Init
@@ -1729,6 +1801,13 @@ void UI_Init( void )
 
 	uiStatic.initialized = true;
 	uiStatic.lowmemory = (int)EngFuncs::GetCvarFloat( "host_lowmemorymode" );
+
+	// A7 build 139 (items 3+4): a Steam persona captured while the game
+	// was not running (launcher-side sign-in) reaches the name cvar right
+	// here; sign-ins made while the game runs are picked up by the menu's
+	// next Reload/Show paths (UpdateSteam, Player Setup, main menu) - one
+	// pair of tiny file reads each, never a per-frame or per-tap path.
+	UI_ApplySteamPersona();
 
 	// setup game info
 	gameinfo2_t *gi = EngFuncs::GetGameInfo();

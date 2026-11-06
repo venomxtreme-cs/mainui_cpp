@@ -528,13 +528,15 @@ void CMenuPlayerSetup::WriteNewLogo( void )
 }
 
 // A7 round 100: the picture the scoreboard will pick for me, in the
-// same order the draw code uses - imported image, my Steam photo, the
-// logos/ fallback stored in cl_playerlogo. NULL = nothing stored yet.
+// same order the draw code uses - my Steam photo (a signed-in account
+// owns the avatar: build 139 item 4 beats an imported picture), then
+// the imported image, the logos/ fallback stored in cl_playerlogo.
+// NULL = nothing stored yet.
 static const char *AvatarEffectivePath( const char *playerlogo )
 {
 	static const char *cands[] = {
+		"media/avatars/avatar_self.png",     // my Steam photo (wins)
 		"media/avatars/avatar_custom.png",   // "Import image..." (Options)
-		"media/avatars/avatar_self.png",     // my Steam photo
 	};
 
 	for( size_t i = 0; i < V_ARRAYSIZE( cands ); i++ )
@@ -569,6 +571,16 @@ void CMenuPlayerSetup::UpdateAvatar()
 // re-checks while drawn).
 void CMenuPlayerSetup::OnAvatarImport()
 {
+	// A7 build 139 (item 4, "if he use steam account don't let him
+	// change avatar"): the Steam photo is the avatar while the account
+	// is connected - the button is hidden, this is the functional belt
+	// for a dialog that was already open when the sign-in finished
+	if( UI_SteamSignedIn() )
+	{
+		UI_ShowMessageBox( "Steam account connected - your Steam photo is used as the avatar." );
+		return;
+	}
+
 	static const char *pats[] = {
 		"logos/*",
 		"*.bmp",
@@ -768,6 +780,15 @@ void CMenuPlayerSetup::_Init( void )
 		btnAvatarImport.SetRect( 512, btnChooseColor.pos.y + btnChooseColor.size.h + UI_OUTLINE_WIDTH, 148, 32 );
 		btnAvatarImport.onReleased = VoidCb( &CMenuPlayerSetup::OnAvatarImport );
 
+		// A7 build 139 (item 4, "if he use steam account don't let him
+		// change avatar"): while friends/steamid.txt exists the Steam
+		// photo owns the scoreboard logo - hide the import button here
+		// and re-evaluate on every Reload (a sign-in may land later)
+		if( UI_SteamSignedIn() )
+			btnAvatarImport.Hide();
+		else
+			btnAvatarImport.Show();
+
 		avatarImage.hImage = 0;
 		avatarImage.stripes = NULL;
 		avatarImage.stripeCount = 0;
@@ -830,6 +851,15 @@ void CMenuPlayerSetup::Reload()
 		// image imported meanwhile shows up right away
 		EnsurePlayerLogo();
 		UpdateAvatar();
+
+		// A7 build 139 (items 3+4): re-evaluate the avatar lock (the
+		// sign-in may have landed while this dialog was closed) and pick
+		// up a persona captured by the Steam screen
+		if( UI_SteamSignedIn() )
+			btnAvatarImport.Hide();
+		else
+			btnAvatarImport.Show();
+		UI_ApplySteamPersona();
 	}
 	if( !hideModels ) UpdateModel();
 }

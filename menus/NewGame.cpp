@@ -172,11 +172,17 @@ public:
 	// is on the tab (empty list / invalid entry)
 	const char *SelectedMap( void );
 
+	// A7 build 139 (round 139 items 1+2): also driven from
+	// CMenuNewGame::Draw - TabView only draws the SELECTED page, so an
+	// armed scan on a dialog opened on another tab never ran and the model
+	// stayed built-but-empty ("maps hidden")
+	void RunPendingScan( void );
+
 private:
 	void _Init() override;
 	void Reload() override;
 	void Draw() override;
-	void RunPendingScan( void );
+	bool ArmDeferredScan( void );
 
 	CMenuAction secMap;
 
@@ -314,6 +320,21 @@ public:
 	// (the same owner->back-reference CreateGame keeps for its OK button)
 	CMenuPicButton *startBtn;
 
+	// A7 build 139 (item 2, user: "in new game menu, map dosen't show like
+	// hiding"): the deferred scan was only driven by the Map page's own
+	// Draw(), but CMenuTabView::Draw() draws ONLY the selected page - open
+	// the dialog while another tab is current (the cursor sticks from the
+	// last visit) and the armed model stayed built-but-empty forever
+	// (m_bBuilt=true + needMapListUpdate=false from the arm = every later
+	// Update() early-outs) - an empty list that never self-corrects. The
+	// window itself now drains the pending scan on its first frame, no
+	// matter which tab is showing.
+	void Draw() override
+	{
+		CMenuFramework::Draw();
+		mapPage.RunPendingScan();
+	}
+
 private:
 	void _Init() override;
 
@@ -439,11 +460,19 @@ const char *CMenuNewGameMapPage::SelectedMap( void )
 
 // build 90: same shape as CreateGame::Reload - builds after a game (the
 // engine raises uiStatic.needMapListUpdate in ConnectionProgress); between
-// those opens Update() is a plain "list is fresh" return
+// those opens Update() is a plain "list is fresh" return.
+//
+// A7 build 139 (item 1, user: "fix when i click new game it be too late"):
+// BaseWindow::Show() runs Reload() on EVERY open, and this used to call
+// mapsModel.Update() straight - so after any game or download the tap paid
+// the full maps/*.bsp FUSE walk before the window could appear (build 138
+// only deferred the _Init path, which runs once per process). Arm the same
+// deferred scan instead: Show() returns instantly, Draw() pays the walk one
+// frame later while the window is already on screen.
 void CMenuNewGameMapPage::Reload( void )
 {
 	BaseClass::Reload();
-	mapsModel.Update();
+	ArmDeferredScan();
 }
 
 void CMenuNewGameMapPage::_Init( void )
@@ -470,18 +499,42 @@ void CMenuNewGameMapPage::_Init( void )
 	// window is already on screen, restoring both flags first so the
 	// "always rescan first, never trust a stale maps.lst" contract of
 	// build 135 stays intact.
+	//
+	// A7 build 139 (items 1+2): the same arming now also runs from
+	// Reload() (see ArmDeferredScan) and the pending scan is driven by
+	// CMenuNewGame::Draw(), not only by this page's own Draw() - TabView
+	// skips non-selected pages, which left the armed model built-but-empty
+	// forever when the dialog opened on another tab.
+	ArmDeferredScan();
+	mapsList.SetModel( &mapsModel );   // may Update() here, footer exists already
+	mapsList.SetRect( 16, 54, 940, 328 );
+
+	AddItem( secMap );
+	AddItem( mapsList );
+}
+
+// A7 build 139 (items 1+2): one arming rule for every open path (_Init's
+// SetModel and Show()'s Reload). Returns true when a real scan is now
+// pending; the flags are consumed/restored by RunPendingScan().
+bool CMenuNewGameMapPage::ArmDeferredScan( void )
+{
+	// Show() runs Init() (_Init arms) and then Reload() in the SAME call,
+	// and a dialog closed before its first Draw re-opens with the state
+	// still armed - recomputing here would see the armed cache flags and
+	// clear the pending scan (and m_bScanWasForced) that must survive
+	if( m_bScanPending )
+		return true;
+
 	m_bScanPending = !( mapsModel.m_bBuilt && !uiStatic.needMapListUpdate );
 	m_bScanWasForced = m_bScanPending && uiStatic.needMapListUpdate;
 	if( m_bScanPending )
 	{
 		mapsModel.m_bBuilt = true;             // arms Update()'s early-out
 		uiStatic.needMapListUpdate = false;    // consumed here, restored in RunPendingScan()
+		Con_Printf( "[A7] build139: New Game map scan deferred (open path, %s)\n",
+			m_bScanWasForced ? "post-download rescan" : "session-first scan" );
 	}
-	mapsList.SetModel( &mapsModel );   // may Update() here, footer exists already
-	mapsList.SetRect( 16, 54, 940, 328 );
-
-	AddItem( secMap );
-	AddItem( mapsList );
+	return m_bScanPending;
 }
 
 // A7 build 138 (item 3): the deferred session-first scan. Called after the

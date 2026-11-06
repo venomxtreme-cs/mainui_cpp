@@ -249,17 +249,30 @@ bool CMenuBackgroundBitmap::LoadSteamBackground( bool gamedirOnly )
 		afile = (char *)EngFuncs::COM_LoadFile( "resource/HD_BackgroundLayout.txt" );
 
 	// A7 build 126: one-shot proof in engine.log of WHICH layout won
-	// (also the scan marker that this code ships in libmenu)
-	static bool s_a7_bg_logged = false;
-	if( afile && !s_a7_bg_logged )
-	{
-		s_a7_bg_logged = true;
-		Con_Printf( "[A7] build126: background layout %s\n",
-			original ? "original" : "HD fallback" );
-	}
+	// (also the scan marker that this code ships in libmenu).
+	//
+	// A7 build 139 (item 5, user: "fix background still with hd"): that
+	// line was decided on the FILENAME alone, and a stale on-device file
+	// is still named BackgroundLayout.txt - only its CONTENT is the old
+	// HD collage. The proof is now the parse RESULT: design resolution,
+	// tiles actually loaded and the first tile that failed (an HD layout
+	// reads 3840x1600 / 21_9_* here, the original 1280x720 / 1280_*).
+	// One failure line max and one success line max per process.
+	static bool s_a7_bg_loggedFail = false;
+	static bool s_a7_bg_loggedOk = false;
+	int tilesOk = 0;
+	const char *failTok = NULL;
 
 	if( !afile )
+	{
+		if( !s_a7_bg_loggedFail )
+		{
+			s_a7_bg_loggedFail = true;
+			Con_Printf( "[A7] build126: background layout MISSING (%s)\n",
+				gamedirOnly ? "gamedir" : "base" );
+		}
 		return false;
+	}
 
 	pfile = afile;
 
@@ -283,11 +296,18 @@ bool CMenuBackgroundBitmap::LoadSteamBackground( bool gamedirOnly )
 		bimage_t img;
 
 		if( !EngFuncs::FileExists( token, gamedirOnly ))
+		{
+			failTok = token;   // the tile the layout wants (missing on disk)
 			goto freefile;
+		}
 
 		img.hImage = EngFuncs::PIC_Load( token, PIC_NOFLIP_TGA );
 
-		if( !img.hImage ) goto freefile;
+		if( !img.hImage )
+		{
+			failTok = token;   // present but undecodable
+			goto freefile;
+		}
 
 		// ignore "scaled" attribute. What does it mean?
 		pfile = EngFuncs::COM_ParseFile( pfile, token, sizeof( token ) );
@@ -305,11 +325,36 @@ bool CMenuBackgroundBitmap::LoadSteamBackground( bool gamedirOnly )
 		img.size.h = EngFuncs::PIC_Height( img.hImage );
 
 		s_SteamBackground.AddToTail( img );
+		tilesOk++;
 	}
 
 	loaded = true;
 
 freefile:
+	// A7 build 139 (item 5): proof of the parse RESULT, not of the winning
+	// filename (a stale on-device HD collage keeps the original name). At
+	// most two lines per process: the first failure, if any, then the
+	// first real load.
+	if( loaded && !s_a7_bg_loggedOk )
+	{
+		s_a7_bg_loggedOk = true;
+		Con_Printf( "[A7] build126: background layout %s %dx%d, tiles %d loaded (%s)\n",
+			original ? "original" : "HD fallback",
+			s_SteamBackgroundImageSize.w, s_SteamBackgroundImageSize.h,
+			tilesOk, gamedirOnly ? "gamedir" : "base" );
+	}
+	else if( !loaded && !s_a7_bg_loggedFail )
+	{
+		s_a7_bg_loggedFail = true;
+		if( failTok )
+			Con_Printf( "[A7] build126: background layout %s FAILED at tile %s (%d loaded, %s)\n",
+				original ? "original" : "HD fallback", failTok, tilesOk,
+				gamedirOnly ? "gamedir" : "base" );
+		else
+			Con_Printf( "[A7] build126: background layout %s unparsable (%s)\n",
+				original ? "original" : "HD fallback", gamedirOnly ? "gamedir" : "base" );
+	}
+
 	EngFuncs::COM_FreeFile( afile );
 	return loaded;
 }

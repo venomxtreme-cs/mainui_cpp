@@ -57,6 +57,15 @@ extern void UI_FinalCredits( void );
 void UI_MenuResetPing_f( void );
 void UI_ConnectionWarning_f( void );
 void UI_ShowMessageBox( const char *text );
+
+// A7 build 139 (round 139 items 3+4): Steam sign-in -> game identity.
+// UI_SteamSignedIn is the friends/steamid.txt gate (avatar import is
+// refused while it holds); UI_ApplySteamPersona pushes the persona the
+// SteamFriends screen saved as friends/name.txt into the name cvar once
+// per persona change (friends/name_applied.txt remembers the applied one
+// so hand-edited names survive).
+extern bool UI_SteamSignedIn( void );
+extern void UI_ApplySteamPersona( void );
 void UI_UpdateDialog( int preferStore );
 void UI_ConnectionProgress_Disconnect( void );
 void UI_ConnectionProgress_Download( const char *pszFileName, const char *pszServerName, int iCurrent, int iTotal, const char *comment );

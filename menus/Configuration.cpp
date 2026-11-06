@@ -483,14 +483,18 @@ void CMenuOptionsMPPage::UpdateLogo()
 }
 
 // A7 round 100: the picture the scoreboard will pick for me, in the
-// same order the draw code uses - imported image, my Steam photo, the
-// logos/ fallback stored in cl_playerlogo, then any logos/ picture so
-// a fresh install still shows something. "" = nothing to show yet.
+// same order the draw code uses - my Steam photo, the imported image,
+// the logos/ fallback stored in cl_playerlogo, then any logos/ picture
+// so a fresh install still shows something. "" = nothing to show yet.
+// A7 build 139 (item 4, "if he use steam account don't let him change
+// avatar"): avatar_self.png now comes FIRST - a signed-in account's
+// photo beats a picture imported earlier, and while signed in the
+// import path itself is refused (UpdateSteam hides the button).
 static const char *AvatarEffectivePath( const char *playerlogo )
 {
 	static const char *cands[] = {
+		"media/avatars/avatar_self.png",     // my Steam photo (wins)
 		"media/avatars/avatar_custom.png",   // "Import image..." (Options)
-		"media/avatars/avatar_self.png",     // my Steam photo
 	};
 
 	for( size_t i = 0; i < V_ARRAYSIZE( cands ); i++ )
@@ -553,6 +557,16 @@ void CMenuOptionsMPPage::UpdateAvatar()
 // re-checks while drawn).
 void CMenuOptionsMPPage::OnAvatarImport()
 {
+	// A7 build 139 (item 4, "if he use steam account don't let him
+	// change avatar"): while friends/steamid.txt exists the Steam photo
+	// is the avatar - the button is hidden (UpdateSteam) and this is the
+	// functional belt for a dialog that was already open
+	if( UI_SteamSignedIn() )
+	{
+		UI_ShowMessageBox( "Steam account connected - your Steam photo is used as the avatar." );
+		return;
+	}
+
 	static const char *pats[] = {
 		"logos/*",
 		"*.bmp",
@@ -813,12 +827,28 @@ void CMenuOptionsMPPage::UpdateSteam()
 		steamRow.SetText( text );
 
 		Con_Printf( "[A7] build136: steam row signed in (%s)\n", id );
+
+		// A7 build 139 (item 4, "if he use steam account don't let him
+		// change avatar"): the Steam photo owns the scoreboard logo - the
+		// import button goes away while the account is connected (the
+		// command is refused in OnAvatarImport too, and Java refuses the
+		// write itself - three gates on purpose)
+		btnAvatarImport.Hide();
 	}
 	else
 	{
 		steamRow.SetText( "Steam: not signed in - click to sign in with Steam" );
 		Con_Printf( "[A7] build136: steam row not signed in\n" );
+
+		btnAvatarImport.Show();
 	}
+
+	// A7 build 139 (items 3+4): a persona captured by the sign-in screen
+	// while the game runs reaches the name cvar here (the sign-in starts
+	// from this very row, so the next open of Options is the earliest
+	// reliable sync point - see UI_ApplySteamPersona for the once-per-
+	// persona rule)
+	UI_ApplySteamPersona();
 }
 
 void CMenuOptionsMPPage::_Init()
