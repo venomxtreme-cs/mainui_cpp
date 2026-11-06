@@ -1029,6 +1029,25 @@ void UI_UpdateMenu( float flTime )
 	if( !uiStatic.initialized )
 		return;
 
+	// A7 build 140 (round 140 item 3, user: "i already sign in but
+	// nothing happened"): the SteamFriends screen writes friends/steamid.txt
+	// + friends/name.txt and then bumps @cl_avatargen through
+	// XashActivity.notifyAvatarSaved(). Build 139 only applied the persona
+	// from Show/Reload/Init paths - returning from the sign-in screen
+	// re-shows NOTHING, so the name never landed while he stayed where he
+	// was. Watching the generation here applies a NEW persona the moment
+	// the menu runs its next frame (i.e. as soon as he is back in the
+	// game), two tiny file reads on a change and none on the way to the
+	// old value. UI_ApplySteamPersona itself is write-once per persona
+	// (friends/name_applied.txt), so hand-typed names survive.
+	static int s_avatargenSeen = -1;
+	int avatargen = (int)EngFuncs::GetCvarFloat( "@cl_avatargen" );
+	if( avatargen != s_avatargenSeen )
+	{
+		s_avatargenSeen = avatargen;
+		UI_ApplySteamPersona();
+	}
+
 	if( UI_UpdateWindowInsets() )
 		UI_VidInit();
 

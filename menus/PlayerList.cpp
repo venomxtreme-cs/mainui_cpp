@@ -76,10 +76,22 @@ class CMenuPlayerList;
 //   column 2 "Properties"   - mute state indicator ("Mute in-game voice"
 //                             while audible, "Muted" while blocked)
 // double-clicking a row (or pressing Enter on it) toggles that player's mute.
-class CMenuPlayerListModel : public CMenuBaseModel
+//
+// A7 build 140 (round 140 item 1, user: "fix in first picture, still show
+// like that with no name player"): this class used to be named exactly like
+// the FOUR-column player model in ServerInfo.cpp - two top-level classes,
+// one name, two different vtable layouts (declaration order of Sort vs
+// GetCellText swapped, plus this class' extra OnActivateEntry slot). The
+// linker merged them weakly and ServerInfo's table dispatched through THIS
+// class' vtable: its Name column ran this GetCellText(column 1) and printed
+// the mute label "Mute in-game voice" instead of every player name, and its
+// other virtuals (GetCellColors) landed on unrelated slots - the "weird
+// color" rows in the same dialog. Renamed here (the sweep found no other
+// cross-file duplicate in mainui) so each TU keeps its own vtable.
+class CMenuPlayerListTableModel : public CMenuBaseModel
 {
 public:
-	CMenuPlayerListModel() : CMenuBaseModel(), m_pMenu( nullptr ) {}
+	CMenuPlayerListTableModel() : CMenuBaseModel(), m_pMenu( nullptr ) {}
 
 	void Update( void ) override { } // rows are pushed by the menu (RefreshPlayers)
 
@@ -129,7 +141,7 @@ public:
 	void Show( void ) override;
 	void Reload( void ) override;
 
-	// public: called by CMenuPlayerListModel::OnActivateEntry
+	// public: called by CMenuPlayerListTableModel::OnActivateEntry
 	void ToggleMute( int line );
 
 private:
@@ -140,14 +152,14 @@ private:
 	void MuteAllChanged( void );           // mute-all / unmute-all
 
 	CMenuTable players_list;
-	CMenuPlayerListModel model;
+	CMenuPlayerListTableModel model;
 	CMenuCheckBox muteAll;   // bottom-left "Mute in-game voice"
 	CMenuPicButton close;    // bottom-right "Close"
 };
 
 ADD_MENU( menu_playerlist, CMenuPlayerList, UI_PlayerList_Menu );
 
-void CMenuPlayerListModel::OnActivateEntry( int line )
+void CMenuPlayerListTableModel::OnActivateEntry( int line )
 {
 	if( m_pMenu )
 		m_pMenu->ToggleMute( line );

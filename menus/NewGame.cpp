@@ -166,7 +166,8 @@ class CMenuNewGameMapPage : public CMenuItemsHolder
 {
 public:
 	CMenuNewGameMapPage( CMenuNewGame *parent ) : mapsModel( parent ),
-		m_bScanPending( false ), m_bScanWasForced( false ) { }
+		m_bScanPending( false ), m_bScanWasForced( false ),
+		m_bPresentFirst( false ) { }
 
 	// build 90: the level Start will launch - NULL when nothing selectable
 	// is on the tab (empty list / invalid entry)
@@ -175,13 +176,13 @@ public:
 	// A7 build 139 (round 139 items 1+2): also driven from
 	// CMenuNewGame::Draw - TabView only draws the SELECTED page, so an
 	// armed scan on a dialog opened on another tab never ran and the model
-	// stayed built-but-empty ("maps hidden")
-	void RunPendingScan( void );
+	// stayed built-but-empty ("maps hidden"). bForce=true (SelectedMap)
+	// skips the build-140 present-first belt.
+	void RunPendingScan( bool bForce = false );
 
 private:
 	void _Init() override;
 	void Reload() override;
-	void Draw() override;
 	bool ArmDeferredScan( void );
 
 	CMenuAction secMap;
@@ -199,6 +200,17 @@ private:
 	// that first frame).
 	bool m_bScanPending;
 	bool m_bScanWasForced;
+	// A7 build 140 (round 140 item 6, user: "when i click 'new game' it
+	// show too late like lagging"): the build-138/139 drain ran inside the
+	// SAME frame that draws the shell, so the GL swap (and therefore the
+	// window appearing) still waited for the whole FUSE walk. Set while a
+	// scan is pending, the FIRST RunPendingScan after it consumes this and
+	// returns - frame N presents the empty shell, frame N+1 pays the walk
+	// while the dialog is already on screen. Drained exactly once per
+	// frame now: only CMenuNewGame::Draw calls RunPendingScan (this
+	// page's own Draw no longer does), so the flag can never be consumed
+	// twice in one frame.
+	bool m_bPresentFirst;
 };
 
 /*
@@ -429,8 +441,19 @@ void CMenuNewGameMapModel::Update( void )
 
 	EngFuncs::COM_FreeFile( afile );
 
+	// A7 build 140 (round 140 item 2, user: "sometime maps are empty"):
+	// a scan that yields NOTHING (transient FUSE/walk failure, a
+	// half-written maps.lst) used to stamp m_bBuilt=true +
+	// needMapListUpdate=false right here, and that EMPTY list stuck for
+	// the whole session - "sometimes maps are empty" until the app was
+	// restarted. Keep the rescan flag raised while the list is empty:
+	// the next open re-arms (ArmDeferredScan sees the flag) and walks
+	// again, so the dialog can never stay empty once any scan succeeds.
+	// The empty case is rare and one line per failed scan, not spam.
 	m_bBuilt = true;
-	uiStatic.needMapListUpdate = false;
+	uiStatic.needMapListUpdate = ( Count() == 0 );
+	if( Count() == 0 )
+		Con_Printf( "[A7] build140: New Game map scan came back EMPTY - will rescan on next open\n" );
 }
 
 /*
@@ -442,8 +465,9 @@ const char *CMenuNewGameMapPage::SelectedMap( void )
 {
 	// A7 build 138 (item 3): a tap can beat the deferred first build
 	// (Start pressed while the list is still empty) - run the scan right
-	// here rather than refusing a valid Start on an empty model
-	RunPendingScan();
+	// here rather than refusing a valid Start on an empty model. bForce:
+	// build 140's present-first belt must not swallow this call.
+	RunPendingScan( true );
 
 	int item = mapsList.GetCurrentIndex();
 
@@ -523,7 +547,12 @@ bool CMenuNewGameMapPage::ArmDeferredScan( void )
 	// still armed - recomputing here would see the armed cache flags and
 	// clear the pending scan (and m_bScanWasForced) that must survive
 	if( m_bScanPending )
+	{
+		// build 140: still pending on a re-open (closed before its first
+		// drain) - present first again on this open too
+		m_bPresentFirst = true;
 		return true;
+	}
 
 	m_bScanPending = !( mapsModel.m_bBuilt && !uiStatic.needMapListUpdate );
 	m_bScanWasForced = m_bScanPending && uiStatic.needMapListUpdate;
@@ -534,15 +563,34 @@ bool CMenuNewGameMapPage::ArmDeferredScan( void )
 		Con_Printf( "[A7] build139: New Game map scan deferred (open path, %s)\n",
 			m_bScanWasForced ? "post-download rescan" : "session-first scan" );
 	}
+
+	// A7 build 140 (item 6): every (re)open with a pending scan presents
+	// the shell FIRST - see m_bPresentFirst. Also set on the already-armed
+	// path above: a dialog closed before its first drain re-opens with the
+	// scan still pending and must present first again.
+	if( m_bScanPending )
+		m_bPresentFirst = true;
 	return m_bScanPending;
 }
 
 // A7 build 138 (item 3): the deferred session-first scan. Called after the
 // window has been presented (first Draw) or inline if a tap races it.
-void CMenuNewGameMapPage::RunPendingScan( void )
+//
+// A7 build 140 (item 6): the first drain after arming now only CONSUMES
+// m_bPresentFirst - the shell is drawn and swapped in that frame, the walk
+// runs on the next one. bForce (SelectedMap) bypasses the belt so a Start
+// tap can never meet a deliberately-skipped scan.
+void CMenuNewGameMapPage::RunPendingScan( bool bForce )
 {
 	if( !m_bScanPending )
 		return;
+
+	if( !bForce && m_bPresentFirst )
+	{
+		m_bPresentFirst = false;
+		Con_Printf( "[A7] build140: New Game shell presented first, map scan runs next frame\n" );
+		return;
+	}
 
 	m_bScanPending = false;
 
@@ -559,16 +607,12 @@ void CMenuNewGameMapPage::RunPendingScan( void )
 		uiStatic.realTime - t0, mapsModel.Count());
 }
 
-void CMenuNewGameMapPage::Draw( void )
-{
-	BaseClass::Draw();
-
-	// A7 build 138 (item 3): frame 1 shows the dialog shell without
-	// blocking the tap; the walked rows land on the flip after this - the
-	// scan's cost is paid VISIBLE (a brief fill after the window is up)
-	// instead of invisible (nothing at all while the FUSE walk runs)
-	RunPendingScan();
-}
+// A7 build 140 (item 6): this page's own Draw() drain is GONE - the window
+// level CMenuNewGame::Draw() drains the pending scan exactly once per
+// frame no matter which tab is showing (that was build 139's fix), and a
+// single per-frame call site is what makes the m_bPresentFirst belt
+// frame-accurate: two drains in one frame (page + window) would consume
+// it before the swap and put the walk back on the presentation frame.
 
 /*
 ================
