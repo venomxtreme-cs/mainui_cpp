@@ -180,6 +180,10 @@ public:
 	// skips the build-140 present-first belt.
 	void RunPendingScan( bool bForce = false );
 
+	// A7 build 142 (round 142 item 3): true while a scan is armed - the
+	// main-menu pre-warm asks this so it only pays a walk when one is due
+	bool ScanPending( void ) const { return m_bScanPending; }
+
 private:
 	void _Init() override;
 	void Reload() override;
@@ -326,6 +330,42 @@ public:
 		// TTT_PERIOD (200 ms) before the window reached full alpha - New Game
 		// must be fully visible on the frame it was clicked
 		DisableTransition();
+	}
+
+	// A7 build 142 (round 142 item 3, user: "when clicking new game still
+	// too laggy to show"): build 140's present-first belt moved the map walk
+	// INSIDE the dialog (shell at frame N, FUSE walk at frame N+1) - the
+	// window opened, then paid a freeze, so it still read as laggy to him.
+	// Both costs now leave the tap completely: the main menu drives these
+	// two hooks a couple frames after ITS first present (Main.cpp Draw),
+	// one frame apart - WarmDialog builds the dialog (Init + VidInit: item
+	// construction, control textures) and WarmScan pays the session-first
+	// maps/*.bsp walk right there. By the time he taps New Game the
+	// window's Show() is Reload-only and the model is BUILT, so the dialog
+	// comes up once with the full list on frame one - no belt, no second
+	// frame, nothing to wait for. After an in-game download the engine
+	// raises needMapListUpdate, ArmDeferredScan re-arms on that open and
+	// the old belt (frame N shell / frame N+1 walk) takes over again.
+	void WarmDialog( void )
+	{
+		if( WasInit() )
+			return; // already built (he beat the warm, or a re-warm ran)
+
+		CMenuFramework::Init();
+		CMenuFramework::VidInit();
+		Con_Printf( "[A7] build142: New Game dialog warmed off the tap path\n" );
+	}
+
+	void WarmScan( void )
+	{
+		if( !WasInit() || !mapPage.ScanPending() )
+			return;
+
+		// bForce: this runs on the already-presented main menu, not inside
+		// the New Game shell, so there is no present-first belt to protect -
+		// drain the armed session-first walk NOW
+		mapPage.RunPendingScan( true );
+		Con_Printf( "[A7] build142: New Game map pre-scanned off the tap path\n" );
 	}
 
 	// build 90: public - the map model greys it when no level is available
@@ -1048,3 +1088,19 @@ void CMenuNewGame::_Init( void )
 }
 
 ADD_MENU( menu_newgame, CMenuNewGame, UI_NewGame_Menu );
+
+// A7 build 142 (round 142 item 3): the one-shot entry points the main menu
+// drives from its own Draw (see Main.cpp). They no-op when the menu object
+// is not precached yet or when their phase already ran - every call is
+// cheap until something real is due.
+void UI_NewGame_WarmDialog( void )
+{
+	if( menu_newgame )
+		menu_newgame->WarmDialog();
+}
+
+void UI_NewGame_WarmScan( void )
+{
+	if( menu_newgame )
+		menu_newgame->WarmScan();
+}

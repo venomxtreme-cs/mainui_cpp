@@ -82,6 +82,29 @@ public:
 		UI_ApplySteamPersona();
 	}
 
+	// A7 build 142 (round 142 item 3, user: "when clicking new game still
+	// too laggy to show"): one-shot pre-warm phases for the New Game
+	// dialog, driven from the main menu's own Draw. Frame 1 renders before
+	// the menu's first swap, so there is deliberately nothing to do there;
+	// frame 2 (the menu is on screen by then) builds the hidden dialog's
+	// chrome, frame 3 pays the session-first maps/*.bsp walk. The phases
+	// sit ~30 ms apart right after menu open - safely before he can reach
+	// the New Game row - and the tap itself becomes a pure Reload with the
+	// map model already BUILT: no Init, no FUSE walk, no second frame.
+	// After an in-game download the engine raises needMapListUpdate, the
+	// next dialog open re-arms and build 140's present-first belt still
+	// covers that path.
+	void Draw() override
+	{
+		CMenuFramework::Draw();
+
+		static int s_iWarmPhase = 0;
+		if( ++s_iWarmPhase == 2 )
+			UI_NewGame_WarmDialog();
+		else if( s_iWarmPhase == 3 )
+			UI_NewGame_WarmScan();
+	}
+
 	void QuitDialogCb();
 
 private:

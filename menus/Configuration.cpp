@@ -822,11 +822,17 @@ void CMenuOptionsMPPage::UpdateSteam()
 
 	if( id[0] )
 	{
-		char text[96];
-		snprintf( text, sizeof( text ), "Steam ID: %s (click to open)", id );
-		steamRow.SetText( text );
+		// A7 build 142 (round 142 item 1, user: "don't show in options
+		// game , just only photo from steam and name changed"): the raw
+		// Steam ID64 no longer draws on this row - the only visual that
+		// stays here is the Steam photo (and the screen the row opens).
+		// The identity change he sees in-game is the persona name
+		// (UI_ApplySteamPersona pushes friends/name.txt into the name
+		// cvar), not a number; the id still lives on disk for every gate
+		// that needs it and shows on the Steam screen itself.
+		steamRow.SetText( "Steam connected - click to open" );
 
-		Con_Printf( "[A7] build136: steam row signed in (%s)\n", id );
+		Con_Printf( "[A7] build142: steam row connected (photo only, id hidden)\n" );
 
 		// A7 build 139 (item 4, "if he use steam account don't let him
 		// change avatar"): the Steam photo owns the scoreboard logo - the

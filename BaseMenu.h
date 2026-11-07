@@ -303,6 +303,11 @@ public:
 // Menus
 void UI_Main_Menu( void );
 void UI_NewGame_Menu( void );
+// A7 build 142 (round 142 item 3): one-shot New Game pre-warm phases,
+// driven from the main menu's Draw (dialog chrome, then the session-first
+// map walk) so the New Game tap never builds or scans again
+void UI_NewGame_WarmDialog( void );
+void UI_NewGame_WarmScan( void );
 void UI_LoadGame_Menu( void );
 void UI_SaveGame_Menu( void );
 void UI_SaveLoad_Menu( void );
