@@ -103,6 +103,12 @@ public:
 			UI_NewGame_WarmDialog();
 		else if( s_iWarmPhase == 3 )
 			UI_NewGame_WarmScan();
+		// A7 build 143 (round 143 item 1): from frame 4 on, every main
+		// menu frame pre-drains a raised map-list flag (post-download)
+		// so the New Game tap meets a built model - all three hooks are
+		// no-ops until something is actually due
+		else if( s_iWarmPhase >= 4 )
+			UI_NewGame_PreDrain();
 	}
 
 	void QuitDialogCb();

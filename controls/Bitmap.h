@@ -38,6 +38,12 @@ public:
 		szPressPic = pressPic;
 	}
 
+	// A7 build 143 (round 143 item 6): true when SetPicture's load really
+	// materialized a texture - callers gate white placeholder fills on
+	// this (Draw() paints colorBase whenever the handle is missing, so a
+	// file the decoder rejects showed as a solid white plate)
+	bool IsPictureValid( void ) const { return szPic.IsValid(); }
+
 	void SetRenderMode( ERenderMode renderMode, ERenderMode focusRenderMode = QM_DRAWNORMAL, ERenderMode pressRenderMode = QM_DRAWNORMAL )
 	{
 		eRenderMode = renderMode;

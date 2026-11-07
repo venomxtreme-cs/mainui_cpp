@@ -308,6 +308,10 @@ void UI_NewGame_Menu( void );
 // map walk) so the New Game tap never builds or scans again
 void UI_NewGame_WarmDialog( void );
 void UI_NewGame_WarmScan( void );
+// A7 build 143 (round 143 item 1): per-frame pre-drain of a raised
+// map-list flag while the main menu is up, so the New Game tap meets a
+// built model (no walk inside the tap)
+void UI_NewGame_PreDrain( void );
 void UI_LoadGame_Menu( void );
 void UI_SaveGame_Menu( void );
 void UI_SaveLoad_Menu( void );
@@ -322,6 +326,10 @@ void UI_Controls_Menu( void );
 void UI_AdvControls_Menu( void );
 void UI_GameOptions_Menu( void );
 void UI_CreateGame_Menu( void );
+// A7 build 143 (round 143 item 1): New Game's pre-drain consumed
+// needMapListUpdate - CreateGame's map model early-outs on that flag, so
+// it must be told its list went stale (see CMenuCreateGame::m_bStale)
+void UI_CreateGame_MarkMapsStale( void );
 void UI_Audio_Menu( void );
 void UI_Video_Menu( void );
 void UI_VidOptions_Menu( void );

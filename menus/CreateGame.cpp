@@ -70,12 +70,22 @@ public:
 class CMenuCreateGame : public CMenuFramework
 {
 public:
-	CMenuCreateGame() : CMenuFramework("CMenuCreateGame"), mapsListModel( this ) { }
+	CMenuCreateGame() : CMenuFramework("CMenuCreateGame"), mapsListModel( this ),
+		m_bStale( false ) { }
 	static void Begin( CMenuBaseItem *pSelf, void *pExtra );
 
 	void Show() override;
 	void Reload( void ) override;
 	void SaveCvars( void );
+
+	// A7 build 143 (round 143 item 1): New Game's main-menu pre-drain
+	// walks the maps and CONSUMES needMapListUpdate - tell this dialog's
+	// model its list went stale, or its next open would early-out on the
+	// cleared flag and miss the newly downloaded map (only the FIRST open
+	// is safe without this: _Init raises the flag itself)
+	void MarkMapsStale( void ) { m_bStale = true; }
+	bool IsStale( void ) const { return m_bStale; }   // asked by the model
+	void ClearStale( void ) { m_bStale = false; }      // after its walk
 
 	CMenuField	maxClients;
 	CMenuField	hostName;
@@ -92,6 +102,10 @@ public:
 private:
 	void _Init() override;
 	void _VidInit() override;
+
+	// A7 build 143 (round 143 item 1): staleness handed over by
+	// UI_CreateGame_MarkMapsStale (New Game pre-drained the flag)
+	bool m_bStale;
 };
 
 /*
@@ -164,7 +178,9 @@ void CMenuMapListModel::Update( void )
 {
 	char *afile;
 
-	if( !uiStatic.needMapListUpdate )
+	// A7 build 143 (round 143 item 1): also rebuild when New Game's
+	// pre-drain consumed the flag on this model's behalf (m_bStale)
+	if( !uiStatic.needMapListUpdate && !parent->IsStale() )
 		return;
 
 	RemoveAll();
@@ -210,6 +226,7 @@ void CMenuMapListModel::Update( void )
 
 	EngFuncs::COM_FreeFile( afile );
 	uiStatic.needMapListUpdate = false;
+	parent->ClearStale(); // A7 build 143 (item 1)
 }
 
 /*
@@ -348,3 +365,13 @@ void CMenuCreateGame::Reload( void )
 }
 
 ADD_MENU( menu_creategame, CMenuCreateGame, UI_CreateGame_Menu );
+
+// A7 build 143 (round 143 item 1): free-function bridge - menu_newgame's
+// pre-drain runs in NewGame.cpp, where the file-static menu_creategame
+// pointer is not visible (ADD_MENU3 declares it per translation unit),
+// so the staleness hand-off goes through BaseMenu.h
+void UI_CreateGame_MarkMapsStale( void )
+{
+	if( menu_creategame )
+		menu_creategame->MarkMapsStale();
+}

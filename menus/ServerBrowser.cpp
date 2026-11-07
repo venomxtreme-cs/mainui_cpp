@@ -798,6 +798,19 @@ void CMenuGameListModel::AddServerToList( netadr_t adr, const char *info, bool i
 
 void CMenuServerBrowser::Connect( server_t &server )
 {
+	// A7 build 143 (round 143 item 4): a name-only friend row carries no
+	// address (zeroed netadr renders as 0.0.0.0:0) - the Steam fetch
+	// knows the friend's name but not where they play. REFUSE politely
+	// instead of dialing a dead address. Both entry points land here:
+	// the Join-game confirm (msgBox) and a table row activate
+	// (Table.cpp -> OnActivateEntry)
+	if( server.adr.ip[0] == 0 && server.adr.ip[1] == 0 &&
+		server.adr.ip[2] == 0 && server.adr.ip[3] == 0 && server.adr.port == 0 )
+	{
+		UI_ShowMessageBox( "This friend has no joinable server right now." );
+		return;
+	}
+
 	// prevent refresh during connect
 	menu_internetgames->refreshTime = uiStatic.realTime + 999999;
 
@@ -875,6 +888,14 @@ void CMenuServerBrowser::FavoriteServer()
 		return;
 
 	server_t &serv = gameListModel.servers[i];
+
+	// A7 build 143 (round 143 item 4): a name-only friend row has no
+	// address - nothing meaningful to put into favorites (its string is
+	// 0.0.0.0:0)
+	if( serv.adr.ip[0] == 0 && serv.adr.ip[1] == 0 &&
+		serv.adr.ip[2] == 0 && serv.adr.ip[3] == 0 && serv.adr.port == 0 )
+		return;
+
 	const char *sadr = EngFuncs::NET_AdrToString( serv.adr );
 
 	serv.favorite = !serv.favorite;
@@ -1043,6 +1064,11 @@ A7: the Friends tab of the original GameUI row. One entry per line of
 Steam friends screen picks the steam://connect link out of every friend's
 page and saves it there.
 
+A7 build 143 (round 143 item 4): a NAME-ONLY line - a bare TAB then the
+friend's name, nothing before it - also renders: the keyless Steam fetch
+saves friends that have no joinable server that way (null address, see
+Connect()'s refusal).
+
 Every line becomes a pending dummy server, the same placeholder path the
 Favorites/History tabs use for a not-yet-queried entry: Join game and View
 game info work right away, and the query issued afterwards fills in the
@@ -1166,6 +1192,33 @@ bool CMenuServerBrowser::LoadFriendsTab( void )
 					EngFuncs::ClientCmdF( false, "ui_queryserver \"%s\" \"%s\"",
 						EngFuncs::NET_AdrToString( adr ), serv.ToProtocol( ));
 				}
+			}
+			else if( !addr[0] && name[0] )
+			{
+				// A7 build 143 (round 143 item 4, user: "i already login use
+				// steam id but nothing show friends list"): a NAME-ONLY line
+				// ('\t<friend name>', address empty before the tab) comes
+				// from the keyless Steam friends fetch - the friend is known
+				// but plays nowhere joinable. Render the row anyway: zeroed
+				// netadr (NA_UNDEFINED), the same 9.999 "no answer yet"
+				// placeholder the other dummy rows use, no query thrown at
+				// it - and Connect() refuses it politely instead of dialing
+				// 0.0.0.0 (NET_CompareAdr treats two zeroed addresses as
+				// NOT equal - bad address type falls through to false - so
+				// every friend row survives AddServerToList's dedupe)
+				netadr_t noAdr;
+				memset( &noAdr, 0, sizeof( noAdr ));
+
+				CUtlString info;
+				info.AppendFormat( "\\host\\%s", name );
+				info.AppendFormat( "\\gamedir\\%s", gMenu.m_gameinfo.gamefolder );
+				info.Append( "\\map\\unknown\\numcl\\0\\maxcl\\0\\p\\49" );
+
+				server_t serv( noAdr, info, false, true );
+				serv.UpdateData();
+				serv.SetPing( 9.999f );
+
+				m_InternetServers[tab].AddToTail( serv );
 			}
 		}
 

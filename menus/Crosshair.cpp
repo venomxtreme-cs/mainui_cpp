@@ -51,6 +51,9 @@ private:
 	void _Init() override;
 	void Reload() override;
 
+	// A7 build 143 (round 143 item 3): live write when the size spin moves
+	void SizeChanged();
+
 	CMenuSpinControl size;
 	CMenuSpinControl color;
 	CMenuCheckBox translucent;
@@ -192,7 +195,13 @@ void CMenuClassicCrosshair::_Init()
 	static CStringArrayModel sizes( sizelist, V_ARRAYSIZE( sizelist ) );
 
 	size.Setup( &sizes );
-	size.LinkCvar( "cl_crosshair_size", CMenuEditable::CVAR_VALUE );
+	// A7 build 143 (round 143 item 3, user: "crosshair size ... sometime
+	// it didn't move"): CVAR_VALUE read the cvar as a FLOAT, so "medium"
+	// parsed to 0 and the spin snapped back to Auto on every open; string
+	// link + write at spin time (CHudAmmo::CalculateCrosshairSize re-reads
+	// cl_crosshair_size every frame, so the crosshair moves live)
+	size.LinkCvar( "cl_crosshair_size", CMenuEditable::CVAR_STRING );
+	size.onChanged = VoidCb( &CMenuClassicCrosshair::SizeChanged );
 	size.SetRect( x, y, 220, 32 );
 	y += 60;
 
@@ -344,7 +353,10 @@ void CMenuClassicCrosshair::Save()
 	char colorstr[32];
 
 	i = size.GetCurrentValue();
-	EngFuncs::CvarSetString( "cl_crosshair_size", g_szCrosshairSizes[i] );
+	// A7 build 143 (item 3): -1 when the cvar string matched no entry -
+	// skip the write instead of indexing the array out of bounds
+	if ( i >= 0 && i < (int)V_ARRAYSIZE( g_szCrosshairSizes ) )
+		EngFuncs::CvarSetString( "cl_crosshair_size", g_szCrosshairSizes[i] );
 
 	i = color.GetCurrentValue();
 	if ( i >= 0 && i < V_ARRAYSIZE( g_CrosshairColors ) )
@@ -354,6 +366,17 @@ void CMenuClassicCrosshair::Save()
 	}
 
 	translucent.WriteCvar();
+}
+
+// A7 build 143 (round 143 item 3): fired by the spin on every value
+// change (QM_CHANGED) - write the RAW entry the HUD parses, so the
+// crosshair size moves at spin time instead of waiting for Save
+void CMenuClassicCrosshair::SizeChanged()
+{
+	int i = (int)size.GetCurrentValue();
+
+	if ( i >= 0 && i < (int)V_ARRAYSIZE( g_szCrosshairSizes ) )
+		EngFuncs::CvarSetString( "cl_crosshair_size", g_szCrosshairSizes[i] );
 }
 
 int CMenuXhair::CMenuCrosshairPreview::ScaleForRes( float value, int height )
@@ -615,7 +638,9 @@ void CMenuClassicCrosshair::Reload()
 	{
 		if ( i == j )
 		{
-			size.SetCurrentValue( EngFuncs::GetCvarFloat( "cl_crosshair_size" ) );
+			// A7 build 143 (item 3): unknown value lands on Auto (index 0)
+			// - reading the cvar as a float was the old CVAR_VALUE bug
+			size.SetCurrentValue( 0.0f );
 			break;
 		}
 

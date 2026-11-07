@@ -167,7 +167,7 @@ class CMenuNewGameMapPage : public CMenuItemsHolder
 public:
 	CMenuNewGameMapPage( CMenuNewGame *parent ) : mapsModel( parent ),
 		m_bScanPending( false ), m_bScanWasForced( false ),
-		m_bPresentFirst( false ) { }
+		m_bPresentFirst( false ), m_bIdleDrained( false ) { }
 
 	// build 90: the level Start will launch - NULL when nothing selectable
 	// is on the tab (empty list / invalid entry)
@@ -183,6 +183,14 @@ public:
 	// A7 build 142 (round 142 item 3): true while a scan is armed - the
 	// main-menu pre-warm asks this so it only pays a walk when one is due
 	bool ScanPending( void ) const { return m_bScanPending; }
+
+	// A7 build 143 (round 143 item 1, user: "new game still getting late
+	// laggy to show, check how it was before"): called from the main
+	// menu's Draw every frame while this dialog is CLOSED - drains a
+	// raised map-list flag off the tap path. Build 142's warm covers the
+	// session-first walk; this covers every later raise (an in-game
+	// download), so the tap meets a BUILT model with no walk inside it.
+	void PreDrain( void );
 
 private:
 	void _Init() override;
@@ -215,6 +223,12 @@ private:
 	// page's own Draw no longer does), so the flag can never be consumed
 	// twice in one frame.
 	bool m_bPresentFirst;
+	// A7 build 143 (round 143 item 1): PreDrain's one-walk-per-flag-raise
+	// latch. A walk that comes back EMPTY keeps needMapListUpdate raised
+	// (build-140 rule) - without this the pre-drain would re-walk every
+	// single frame while the main menu is up. Cleared only when the flag
+	// itself drops, i.e. when a scan finally succeeded.
+	bool m_bIdleDrained;
 };
 
 /*
@@ -366,6 +380,20 @@ public:
 		// drain the armed session-first walk NOW
 		mapPage.RunPendingScan( true );
 		Con_Printf( "[A7] build142: New Game map pre-scanned off the tap path\n" );
+	}
+
+	// A7 build 143 (round 143 item 1): main-menu side entry (see
+	// UI_NewGame_PreDrain). The window stack draws the main menu
+	// UNDERNEATH open dialogs, so CMenuMain::Draw keeps running while
+	// New Game is open - bail out in that case: the dialog's own Draw
+	// drain (RunPendingScan, once per frame) owns the open dialog, and
+	// this must never add a second drain in the same frame.
+	void PreDrainMaps( void )
+	{
+		if( IsVisible() )
+			return;
+
+		mapPage.PreDrain();
 	}
 
 	// build 90: public - the map model greys it when no level is available
@@ -645,6 +673,56 @@ void CMenuNewGameMapPage::RunPendingScan( bool bForce )
 
 	Con_Printf( "[A7] build138: New Game window was presented first, deferred map scan ran (+%d ms, %d maps)\n",
 		uiStatic.realTime - t0, mapsModel.Count());
+}
+
+// A7 build 143 (round 143 item 1, user: "new game still getting late
+// laggy to show, check how it was before"): drain a RAISED map-list flag
+// while the main menu is on screen, so the New Game tap meets a model that
+// is already BUILT. Three cases, cheapest first:
+//   1. a scan armed by an open path that never drained (dialog closed
+//      before its first Draw) - finish it here, force past the
+//      present-first belt because the dialog is closed, nothing to present
+//   2. flag not raised - nothing due; drop the latch so the NEXT raise is
+//      picked up again
+//   3. session-first walk not done (or a failed scan) - frame 3's
+//      WarmScan / the tap path own that; never race them
+//   4. latch set - this flag raise was already walked (an EMPTY walk
+//      keeps the flag raised by build-140's rule; one walk per raise)
+// otherwise walk now. Update() consumes the flag, so CreateGame's own
+// model must be told its list went stale (its Update early-outs on the
+// flag) - hand the staleness over explicitly.
+void CMenuNewGameMapPage::PreDrain( void )
+{
+	if( m_bScanPending )
+	{
+		m_bIdleDrained = true;
+		RunPendingScan( true );
+		Con_Printf( "[A7] build143: New Game map list pre-drained off the tap path (armed scan, %d maps)\n",
+			mapsModel.Count() );
+		UI_CreateGame_MarkMapsStale();
+		return;
+	}
+
+	if( !uiStatic.needMapListUpdate )
+	{
+		m_bIdleDrained = false; // flag dropped - re-arm the latch
+		return;
+	}
+
+	if( !mapsModel.m_bBuilt )
+		return; // session-first walk not done yet - WarmScan owns it
+
+	if( m_bIdleDrained )
+		return; // this raise was already walked (empty-scan latch)
+
+	m_bIdleDrained = true;
+
+	mapsModel.Update(); // flag is raised - this IS the real walk
+
+	Con_Printf( "[A7] build143: New Game map list pre-drained off the tap path (%d maps)\n",
+		mapsModel.Count() );
+
+	UI_CreateGame_MarkMapsStale();
 }
 
 // A7 build 140 (item 6): this page's own Draw() drain is GONE - the window
@@ -1103,4 +1181,13 @@ void UI_NewGame_WarmScan( void )
 {
 	if( menu_newgame )
 		menu_newgame->WarmScan();
+}
+
+// A7 build 143 (round 143 item 1): per-frame pre-drain driver from the
+// main menu's Draw (see Main.cpp) - cheap no-ops until a map-list flag
+// raise is actually due
+void UI_NewGame_PreDrain( void )
+{
+	if( menu_newgame )
+		menu_newgame->PreDrainMaps();
 }

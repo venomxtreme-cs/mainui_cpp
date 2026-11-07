@@ -26,12 +26,13 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 // build 58: Touch tab removed on user request (touch settings stay reachable
 // from the touch menus / console); every page is organized into labelled
 // sections like the original GameUI grouped options, and the Video tab is
-// split into Display (gamma/brightness) and Rendering (water ripples,
-// detail textures, HUD scaling) groups.
+// split into Display (gamma/brightness) and Rendering (overbrights,
+// detail textures, filtering - build 143 item 8 dropped the water
+// ripples and VBO toggles, the engine force-disables those paths).
 // build 85: Voice tab removed (voice settings live in Player Setup) and
 // Lock tab removed (ui_lockcode is a dead cvar), leaving five tabs. The
 // Video tab now carries a NESTED tab view of its own with two sub-tabs:
-// "Video options" (gamma/brightness/ripple/detailtex/HUD scale) and
+// "Video options" (gamma/brightness/detailtex/HUD scale) and
 // "Video modes" - the old fullscreen CMenuVidModes screen folded in as a
 // page (resolution list, renderer, window mode, vsync, Apply with the
 // 10-second test-mode safety revert). No setting opens a separate
@@ -130,6 +131,16 @@ public:
 	bool Save();
 	void UpdateLogo();
 
+	// A7 build 143 (round 143 item 5): Show toggle for the password field
+	// (the field masks input with '*' while bHideInput is set)
+	void OnShowPasswordToggle();
+
+	// A7 build 143 (round 143 item 3): crosshair size - map the raw cvar
+	// string back onto the localized spin model, and write it live when
+	// the spin moves (the HUD re-reads the cvar every frame)
+	void SizeFromCvar();
+	void SizeChanged();
+
 	// A7 round 100: no picker - show the picture the scoreboard will pick
 	// by itself, and offer the one action that adds a new one
 	void UpdateAvatar();
@@ -181,6 +192,12 @@ private:
 	void Reload() override;
 
 	CMenuField name;
+
+	// A7 build 143 (round 143 item 5): VIP/Admin join password (engine
+	// "password" FCVAR_USERINFO cvar) + Show mask toggle, right column
+	// like the reference Multiplayer page
+	CMenuField password;
+	CMenuCheckBox showPassword;
 
 	CMenuSpinControl logo;
 	class CMenuLogoPreview : public CMenuBaseItem
@@ -732,6 +749,47 @@ void CMenuOptionsMPPage::WriteNewLogo( void )
 	EngFuncs::CvarSetValue( "@cl_logoupdate", !EngFuncs::GetCvarFloat( "@cl_logoupdate" ));
 }
 
+// A7 build 143 (round 143 item 3): the size spin's model holds the
+// LOCALIZED labels (GameUI_Auto...) while cl_crosshair_size holds raw
+// "auto|small|medium|large". Map the cvar string back to its label so
+// the base read-back (UpdateEditable -> SetCurrentValue(string)) lands
+// on the right entry; unknown values fall back to Auto.
+void CMenuOptionsMPPage::SizeFromCvar()
+{
+	static const char *keys[] = { "GameUI_Auto", "GameUI_Small", "GameUI_Medium", "GameUI_Large" };
+	const char *str = EngFuncs::GetCvarString( "cl_crosshair_size" );
+	int i;
+
+	for( i = 0; i < (int)V_ARRAYSIZE( g_szCrosshairSizes ); i++ )
+	{
+		if( !stricmp( str, g_szCrosshairSizes[i] ))
+			break;
+	}
+
+	if( i == (int)V_ARRAYSIZE( g_szCrosshairSizes ))
+		i = 0;
+
+	size.SetCvarString( L( keys[i] ));
+}
+
+// fired by the spin on every value change (QM_CHANGED) - write the RAW
+// entry the HUD parses, so the crosshair size moves at spin time
+void CMenuOptionsMPPage::SizeChanged()
+{
+	int i = (int)size.GetCurrentValue();
+
+	if( i >= 0 && i < (int)V_ARRAYSIZE( g_szCrosshairSizes ))
+		EngFuncs::CvarSetString( "cl_crosshair_size", g_szCrosshairSizes[i] );
+}
+
+// A7 build 143 (round 143 item 5): the Show checkbox unmasks the
+// VIP/Admin password field (bChecked is already toggled when onChanged
+// fires - see CMenuCheckBox::KeyDown)
+void CMenuOptionsMPPage::OnShowPasswordToggle()
+{
+	password.bHideInput = !showPassword.bChecked;
+}
+
 bool CMenuOptionsMPPage::Save()
 {
 	char colorstr[32];
@@ -743,6 +801,9 @@ bool CMenuOptionsMPPage::Save()
 	}
 
 	name.WriteCvar();
+	// A7 build 143 (item 5): VIP/Admin join password (masked field -
+	// WriteCvar pushes the buffer to the engine "password" cvar)
+	password.WriteCvar();
 	WriteNewLogo();
 
 	// A7 round 100: cl_playerlogo is no longer picked by hand - the
@@ -816,9 +877,16 @@ void CMenuOptionsMPPage::UpdateSteam()
 	// own preview class' field) - it binds through SetPicture, and when
 	// there is no picture to show colorBase = 0 keeps Draw() from
 	// painting an empty box (Bitmap.cpp skips the fill then)
+	// A7 build 143 (round 143 item 6, user: "logo in left dosen't show
+	// like color white only"): FileExists is not enough - Draw() fills
+	// colorBase (the white plate) whenever the handle did not
+	// materialize, so a file the decoder rejected (or one caught
+	// mid-write by the Steam fetch) showed as a solid WHITE box. Probe
+	// the texture that SetPicture really loaded: no load -> no plate.
 	bool haveAvatar = EngFuncs::FileExists( "media/avatars/avatar_self.png" );
 	steamPic.SetPicture( "media/avatars/avatar_self.png" );
-	steamPic.colorBase = ( id[0] && haveAvatar ) ? (unsigned int)uiColorWhite : 0u;
+	steamPic.colorBase = ( id[0] && haveAvatar && steamPic.IsPictureValid() )
+		? (unsigned int)uiColorWhite : 0u;
 
 	if( id[0] )
 	{
@@ -873,19 +941,36 @@ void CMenuOptionsMPPage::_Init()
 	// still fit the 401px page with >= 6px gaps.
 	// build 90: re-spaced - every above-label row cleared the control
 	// above it by >= 14px (name -> logo label was a 3px gap, "stuck")
+	// A7 build 143 (round 143 item 5, user: options "should be placed
+	// like that in multiplayer ... check picture"): two columns like the
+	// reference Multiplayer page - LEFT avatar + spray + Steam, RIGHT
+	// player name + VIP/Admin password + crosshair. Labels keep the
+	// build-90 pitch (label top = y - 1.5 * char height).
 	name.szName = L( "GameUI_PlayerName" );
 	name.iMaxLength = 32;
 	name.LinkCvar( "name" );
-	name.SetRect( 16, 44, 400, 32 );
+	name.SetRect( 544, 44, 320, 32 );
+
+	// VIP/Admin join password (engine "password" FCVAR_USERINFO cvar),
+	// masked by default, Show toggle beside the field
+	password.szName = "Password for VIP/Admin access";
+	password.iMaxLength = 64;
+	password.bHideInput = true;
+	password.LinkCvar( "password" );
+	password.SetRect( 544, 134, 320, 32 );
+
+	showPassword.SetNameAndStatus( "Show", "Show the password in plain text" );
+	showPassword.SetRect( 872, 134, 32, 32 );
+	showPassword.onChanged = VoidCb( &CMenuOptionsMPPage::OnShowPasswordToggle );
 
 	logoImage.szName = L( "GameUI_SpraypaintImage" );
-	logoImage.SetRect( 16, 132, 88, 88 );
+	logoImage.SetRect( 16, 180, 88, 88 );
 
 	logosModel.Update();
 	logo.Setup( &logosModel );
 	logo.LinkCvar( "cl_logofile", CMenuEditable::CVAR_STRING );
 	logo.onChanged = VoidCb( &CMenuOptionsMPPage::UpdateLogo );
-	logo.SetRect( 140, 132, 340, 32 );
+	logo.SetRect( 120, 180, 350, 32 );
 
 	// A7 round 100: no picker. The preview shows the picture the
 	// scoreboard resolves on its own, and the button opens the system
@@ -895,20 +980,20 @@ void CMenuOptionsMPPage::_Init()
 
 	btnAvatarImport.SetNameAndStatus( "Import image...",
 		"Pick a picture from your gallery - it shows next to your name on the scoreboard" );
-	btnAvatarImport.SetRect( 140, 306, 340, 32 );
+	btnAvatarImport.SetRect( 120, 68, 350, 32 );
 	btnAvatarImport.onReleased = VoidCb( &CMenuOptionsMPPage::OnAvatarImport );
 
 	avatarImage.szName = "";
-	avatarImage.SetRect( 16, 306, 88, 88 );
+	avatarImage.SetRect( 16, 40, 88, 88 );
 
-	SectionHeader( secAvatar, "Player logo - set up automatically", 16, 270, 480 );
+	SectionHeader( secAvatar, "Player logo - set up automatically", 16, 4, 470 );
 
 	// refresh unconditionally so an imported/stored picture shows on
 	// first open
 	UpdateAvatar();
 
 	btnChooseColor.szName = L( "Choose logo color" );
-	btnChooseColor.SetRect( 140, 184, 340, 32 );
+	btnChooseColor.SetRect( 120, 232, 350, 32 );
 	btnChooseColor.onReleased = VoidCb( &CMenuOptionsMPPage::ShowColorPicker );
 
 	colorPickerDlg.Link( this );
@@ -919,15 +1004,15 @@ void CMenuOptionsMPPage::_Init()
 	sprayNote1.iFlags = QMF_INACTIVE;
 	sprayNote1.colorBase = uiColorHelp;
 	sprayNote1.szName = "Changes apply when you join a new server.";
-	sprayNote1.SetRect( 16, 230, 560, 24 );
+	sprayNote1.SetRect( 16, 276, 470, 24 );
 
-	SectionHeader( secSteam, "Steam account", 600, 300, 440 );
+	SectionHeader( secSteam, "Steam account", 16, 310, 470 );
 
 	steamPic.SetPicture( "media/avatars/avatar_self.png" );
 	steamPic.colorBase = 0; // until UpdateSteam() decides (just below)
-	steamPic.SetRect( 600, 332, 56, 56 );
+	steamPic.SetRect( 16, 342, 56, 56 );
 
-	steamRow.SetRect( 668, 344, 372, 32 );
+	steamRow.SetRect( 84, 354, 400, 32 );
 	steamRow.szStatusText = "Open the Steam sign-in / friends screen";
 	steamRow.onReleased = SteamFriendsOpen;
 	UpdateSteam();
@@ -936,25 +1021,33 @@ void CMenuOptionsMPPage::_Init()
 	// A7 build 87: re-pitched so every label clears the control above it
 	// (header 16..40, size label 52..78, color label 135..161)
 	// build 90: opened up again - 17/19/16px gaps between the rows
-	SectionHeader( crosshairTitle, "Crosshair appearance", 600, 16, 340 );
+	SectionHeader( crosshairTitle, "Crosshair appearance", 544, 184, 320 );
 
 	size.Setup( &sizes );
 	size.szName = "Size";
-	size.LinkCvar( "cl_crosshair_size", CMenuEditable::CVAR_VALUE );
-	size.SetRect( 600, 96, 260, 32 );
+	// A7 build 143 (round 143 item 3, user: "crosshair size in options,
+	// sometime it didn't move"): the old CVAR_VALUE link read the cvar as
+	// a FLOAT - "medium" parsed to 0, the spin always showed Auto, and
+	// Save then REVERTED the real choice back to auto. String link with a
+	// label mapping (the model text is localized, the cvar is raw) plus a
+	// live write on change so the crosshair moves while spinning
+	size.LinkCvar( "cl_crosshair_size", CMenuEditable::CVAR_STRING );
+	size.onCvarGet = VoidCb( &CMenuOptionsMPPage::SizeFromCvar );
+	size.onChanged = VoidCb( &CMenuOptionsMPPage::SizeChanged );
+	size.SetRect( 544, 264, 200, 32 );
 
 	color.Setup( &colors );
 	color.szName = "Color";
 	color.LinkCvar( "cl_crosshair_color", CMenuEditable::CVAR_STRING );
-	color.SetRect( 600, 186, 260, 32 );
+	color.SetRect( 544, 354, 200, 32 );
 
 	// explicit box: without a width the label lands on the box itself
 	translucent.SetNameAndStatus( L( "GameUI_Translucent" ), NULL );
 	translucent.LinkCvar( "cl_crosshair_translucent" );
-	translucent.SetRect( 600, 234, 32, 32 );
+	translucent.SetRect( 760, 354, 32, 32 );
 
 	preview.szName = ""; // title is the crosshairTitle label now
-	preview.SetRect( 880, 96, 160, 160 );
+	preview.SetRect( 880, 184, 160, 160 );
 	preview.hImage = EngFuncs::PIC_Load( "gfx/vgui/crosshair.tga", 0 );
 	preview.hWhite = EngFuncs::PIC_Load( "*white" );
 
@@ -962,6 +1055,8 @@ void CMenuOptionsMPPage::_Init()
 	msgBox.Link( this );
 
 	AddItem( name );
+	AddItem( password );
+	AddItem( showPassword );
 	AddItem( logoImage );
 	AddItem( logo );
 	AddItem( btnChooseColor );
@@ -1805,6 +1900,21 @@ private:
 	CMenuSlider suitVolume;
 	CMenuCheckBox muteFocusLost;
 	CMenuAction secVolume; // build 58 section header
+
+	// A7 build 143 (round 143 item 7, reference Audio page): a second
+	// Voice column plus quality/boost/test rows - every control links an
+	// EXISTING engine cvar (voice.c / s_dsp.c), no new cvars, no
+	// cvar-default changes
+	CMenuAction secVoice;
+	CMenuSlider voiceTransmit;
+	CMenuSlider voiceReceive;
+	CMenuCheckBox voiceEnable;
+	CMenuCheckBox soundQuality;
+	CMenuCheckBox boostMic;
+	CMenuPicButton testMic;
+
+	// Test Microphone: toggle engine voice_loopback (live, not saved)
+	void TestMicToggle();
 };
 
 void CMenuOptionsAudioPage::Save()
@@ -1813,41 +1923,120 @@ void CMenuOptionsAudioPage::Save()
 	musicVolume.WriteCvar();
 	suitVolume.WriteCvar();
 	muteFocusLost.WriteCvar();
+
+	// A7 build 143 (item 7): voice column + quality/boost - the Test
+	// Microphone button writes voice_loopback live, nothing to save
+	voiceTransmit.WriteCvar();
+	voiceReceive.WriteCvar();
+	voiceEnable.WriteCvar();
+	soundQuality.WriteCvar();
+	boostMic.WriteCvar();
+}
+
+// A7 build 143 (item 7): loop the mic back through the voice path so
+// the user can hear it (audible only in-game with voice enabled);
+// press again to stop. Label flips so the state is visible.
+void CMenuOptionsAudioPage::TestMicToggle()
+{
+	bool on = EngFuncs::GetCvarFloat( "voice_loopback" ) == 0.0f;
+
+	EngFuncs::CvarSetValue( "voice_loopback", on ? 1.0f : 0.0f );
+	testMic.szName = on ? "Stop Microphone Test" : "Test Microphone";
 }
 
 void CMenuOptionsAudioPage::_Init()
 {
-	SectionHeader( secVolume, "Volume", 16, 8, 1020 );
+	// A7 build 143 (round 143 item 7): two columns like the reference
+	// Audio page - LEFT Volume (the original stack, narrowed to 480),
+	// RIGHT Voice (transmit/receive sliders, enable, quality, mic boost,
+	// Test Microphone). Label pitch keeps the build-90 clearance
+	// (label top = y - 1.5 * char height).
+	SectionHeader( secVolume, "Volume", 16, 8, 480 );
 
-	// A7 build 87: 88px pitch - each slider label at y-39 clears the
-	// control/header above it (the old y52 put the first label on the
-	// "Volume" header - "stuck text")
-	// build 90: whole stack moved down 8px (96/184/272) with the mute
-	// row at 330 - the Audio page has room, so the rows spread to ~19px
 	soundVolume.szName = L( "GameUI_SoundEffectVolume" );
 	soundVolume.Setup( 0.0, 1.0, 0.05f );
 	soundVolume.LinkCvar( "volume" );
-	soundVolume.SetRect( 16, 96, 1020, 32 );
+	soundVolume.SetRect( 16, 92, 480, 32 );
 
 	musicVolume.szName = L( "GameUI_MP3Volume" );
 	musicVolume.Setup( 0.0, 1.0, 0.05f );
 	musicVolume.LinkCvar( "MP3Volume" );
-	musicVolume.SetRect( 16, 184, 1020, 32 );
+	musicVolume.SetRect( 16, 180, 480, 32 );
 
 	suitVolume.szName = L( "GameUI_HEVSuitVolume" );
 	suitVolume.Setup( 0.0, 1.0, 0.05f );
 	suitVolume.LinkCvar( "suitvolume" );
-	suitVolume.SetRect( 16, 272, 1020, 32 );
+	suitVolume.SetRect( 16, 268, 480, 32 );
 
 	muteFocusLost.SetNameAndStatus( L( "Mute when inactive" ), NULL );
 	muteFocusLost.LinkCvar( "snd_mute_losefocus" );
-	muteFocusLost.SetRect( 16, 330, 32, 32 );
+	muteFocusLost.SetRect( 16, 324, 32, 32 );
+
+	SectionHeader( secVoice, "Voice", 544, 8, 480 );
+
+	voiceTransmit.szName = "Voice transmit volume";
+	voiceTransmit.Setup( 0.0, 1.0, 0.05f );
+	voiceTransmit.LinkCvar( "voice_transmit_scale" );
+	voiceTransmit.SetRect( 544, 92, 480, 32 );
+
+	voiceReceive.szName = "Voice receive volume";
+	voiceReceive.Setup( 0.0, 1.0, 0.05f );
+	voiceReceive.LinkCvar( "voice_scale" );
+	voiceReceive.SetRect( 544, 180, 480, 32 );
+
+	voiceEnable.SetNameAndStatus( "Enable voice", "Receive and send voice chat" );
+	voiceEnable.LinkCvar( "voice_enable" );
+	voiceEnable.SetRect( 544, 232, 32, 32 );
+
+	// dsp quality: room_hires 1 = 22k, 2 = 44k (recommended), 3 = 96k -
+	// the checkbox reads "44k or better" and writes 2/1 back
+	soundQuality.SetNameAndStatus( "Sound high quality", "Voice dsp quality: 44k or 96k instead of 22k" );
+	SET_EVENT_MULTI( soundQuality.onCvarGet,
+	{
+		CMenuCheckBox *cb = (CMenuCheckBox *)pSelf;
+		cb->bChecked = EngFuncs::GetCvarFloat( "room_hires" ) >= 2.0f;
+	});
+	SET_EVENT_MULTI( soundQuality.onCvarWrite,
+	{
+		CMenuCheckBox *cb = (CMenuCheckBox *)pSelf;
+		EngFuncs::CvarSetValue( "room_hires", cb->bChecked ? 2.0f : 1.0f );
+	});
+	soundQuality.LinkCvar( "room_hires" );
+	soundQuality.SetRect( 544, 276, 32, 32 );
+
+	// automatic voice gain control: boost ON = voice_maxgain 5 (engine
+	// default), OFF = 1 (gain capped at unity)
+	boostMic.SetNameAndStatus( "Boost microphone gain", "Raise the automatic gain ceiling for a quiet microphone" );
+	SET_EVENT_MULTI( boostMic.onCvarGet,
+	{
+		CMenuCheckBox *cb = (CMenuCheckBox *)pSelf;
+		cb->bChecked = EngFuncs::GetCvarFloat( "voice_maxgain" ) > 1.0f;
+	});
+	SET_EVENT_MULTI( boostMic.onCvarWrite,
+	{
+		CMenuCheckBox *cb = (CMenuCheckBox *)pSelf;
+		EngFuncs::CvarSetValue( "voice_maxgain", cb->bChecked ? 5.0f : 1.0f );
+	});
+	boostMic.LinkCvar( "voice_maxgain" );
+	boostMic.SetRect( 544, 320, 32, 32 );
+
+	testMic.SetNameAndStatus( "Test Microphone",
+		"Loop your microphone back so you can hear it (in-game; press again to stop)" );
+	testMic.SetRect( 544, 364, 220, 32 );
+	testMic.onReleased = VoidCb( &CMenuOptionsAudioPage::TestMicToggle );
 
 	AddItem( secVolume );
 	AddItem( soundVolume );
 	AddItem( musicVolume );
 	AddItem( suitVolume );
 	AddItem( muteFocusLost );
+	AddItem( secVoice );
+	AddItem( voiceTransmit );
+	AddItem( voiceReceive );
+	AddItem( voiceEnable );
+	AddItem( soundQuality );
+	AddItem( boostMic );
+	AddItem( testMic );
 }
 
 /*
@@ -1875,11 +2064,15 @@ private:
 	CMenuAction secRendering; // build 58 section header
 	CMenuSlider gammaIntensity;
 	CMenuSlider brightness;
-	CMenuCheckBox ripple;
 	CMenuCheckBox hudscale;
 	CMenuCheckBox detailtex;
 	// build 88: the missing xash VideoOptions controls
-	CMenuCheckBox vbo;
+	// A7 build 143 (round 143 item 8, user: "no need enabled vbo on
+	// settings video rendering remove it ... also for water ripples no
+	// need enabled"): vbo + ripple checkboxes are GONE - the engine force
+	// -disables both paths now (gl_rmain.c / gl_warp.c, build143 markers)
+	// so a leftover r_vbo 1 / r_ripple 1 from an old config can never
+	// break textures or spend cycles on the ripple sim
 	CMenuCheckBox overbright;
 	CMenuCheckBox filtering;
 };
@@ -1890,8 +2083,6 @@ void CMenuOptionsVideoOptsPage::Save()
 	// (onChanged) with the 1.8..3.0 / 0..3.0 remap - WriteCvar here
 	// would push raw slider values into the cvars
 	detailtex.WriteCvar();
-	vbo.WriteCvar();
-	ripple.WriteCvar();
 	overbright.WriteCvar();
 	filtering.WriteCvar();
 	hudscale.WriteCvar();
@@ -1928,11 +2119,7 @@ void CMenuOptionsVideoOptsPage::Reload()
 	detailtex.SetGrayed( !gl_active );
 	detailtex.SetInactive( !gl_active );
 
-	vbo.SetGrayed( !gl_active );
-	vbo.SetInactive( !gl_active );
-
-	ripple.SetGrayed( !gl_active );
-	ripple.SetInactive( !gl_active );
+	// build 143 (item 8): vbo/ripple gray lines gone with the checkboxes
 
 	overbright.SetGrayed( !gl_active );
 	overbright.SetInactive( !gl_active );
@@ -1978,9 +2165,10 @@ void CMenuOptionsVideoOptsPage::_Init()
 	// are missed, add all of them"), laid out in two columns to fit the
 	// 362px nested-page height. Labels draw at y-39 for the sliders;
 	// checkboxes label to their right, so the right column is a plain
-	// 42px stack. Content: Display - gamma, brightness, HUD scale;
-	// Rendering - water ripples, VBO, overbrights, detail textures,
-	// texture filtering.
+	// 46px stack. Content: Display - gamma, brightness, HUD scale;
+	// Rendering - overbrights, detail textures, texture filtering.
+	// (build 143 item 8 dropped water ripples + VBO - toggle removed,
+	// the engine force-disables those paths itself)
 	SectionHeader( secDisplay, "Display", 16, 8, 520 );
 
 	gammaIntensity.szName = L( "GameUI_Gamma" );
@@ -2005,33 +2193,26 @@ void CMenuOptionsVideoOptsPage::_Init()
 	SectionHeader( secRendering, "Rendering", 560, 8, 480 );
 
 	// build 90: checkbox column re-pitched 42 -> 46 (48/94/140/186/232)
-	ripple.SetNameAndStatus( L( "Water ripples" ), L( "Rippling water surfaces" ));
-	ripple.LinkCvar( "r_ripple" );
-	ripple.SetRect( 560, 48, 32, 32 );
-
-	vbo.SetNameAndStatus( L( "Use VBO" ), L( "Vertex buffer objects (faster rendering)" ));
-	vbo.LinkCvar( "gl_vbo" );
-	vbo.SetRect( 560, 94, 32, 32 );
-
+	// A7 build 143 (round 143 item 8): ripple + VBO rows REMOVED per the
+	// user - the same 46px pitch restarts at the top for the three that
+	// remain (48/94/140); the engine force-disables both paths itself
 	overbright.SetNameAndStatus( L( "Overbrights" ), L( "Brighter lightmaps" ));
 	overbright.LinkCvar( "gl_overbright" );
-	overbright.SetRect( 560, 140, 32, 32 );
+	overbright.SetRect( 560, 48, 32, 32 );
 
 	detailtex.SetNameAndStatus( L( "Detail textures" ), NULL );
 	detailtex.LinkCvar( "r_detailtextures" );
-	detailtex.SetRect( 560, 186, 32, 32 );
+	detailtex.SetRect( 560, 94, 32, 32 );
 
 	filtering.SetNameAndStatus( L( "Texture filtering" ), NULL );
 	// cvar wired in Reload() - ref_gl and ref_soft use different names
-	filtering.SetRect( 560, 232, 32, 32 );
+	filtering.SetRect( 560, 140, 32, 32 );
 
 	AddItem( secDisplay );
 	AddItem( gammaIntensity );
 	AddItem( brightness );
 	AddItem( hudscale );
 	AddItem( secRendering );
-	AddItem( ripple );
-	AddItem( vbo );
 	AddItem( overbright );
 	AddItem( detailtex );
 	AddItem( filtering );
@@ -2043,6 +2224,27 @@ Video tab - "Video modes" sub-tab (build 85: the old fullscreen
 CMenuVidModes screen folded into Options)
 ====================================================================
 */
+// A7 build 143 (round 143 item 9, user: "add feature screen resolutions,
+// so developer did not add it"): the ladder the picker shows when the
+// backend reports NO display modes (SDL_GetNumDisplayModes == 0 ->
+// VID_GetModeString returns NULL for every index, leaving the existing
+// Video modes sub-tab empty - "as if never added"). Same "%ix%i" shape
+// as the engine's vidmode_t.desc, so the row parser treats both lists
+// identically. Entries are static (the model stores const char *).
+static char s_vidFallbackModes[][16] =
+{
+	"640x480",
+	"800x600",
+	"1024x768",
+	"1280x720",
+	"1366x768",
+	"1600x900",
+	"1920x1080",
+	"2340x1080",
+	"2400x1080",
+	"2560x1440",
+};
+
 class CMenuOptionsVidModesModel : public CMenuBaseArrayModel
 {
 public:
@@ -2057,8 +2259,24 @@ public:
 		return m_szModes[line];
 	}
 
+	// A7 build 143 (item 9): true when the rows are the synthesized
+	// ladder - the page then applies a row by SIZE (vid_setmode W H,
+	// which the backend handles directly) instead of by mode index, and
+	// never writes vid_mode (whose index would address nothing)
+	bool IsFallback( void ) const { return m_bFallback; }
+
+	// "WxH" -> dimensions; false when the row will not parse
+	bool GetRowSize( int line, int &w, int &h )
+	{
+		if( line < 0 || line >= m_szModes.Count())
+			return false;
+
+		return sscanf( m_szModes[line], "%ix%i", &w, &h ) == 2;
+	}
+
 private:
 	CUtlVector<const char *> m_szModes;
+	bool m_bFallback = false;
 };
 
 class CMenuOptionsRenderersModel : public CMenuBaseArrayModel
@@ -2166,6 +2384,7 @@ private:
 void CMenuOptionsVidModesModel::Update()
 {
 	m_szModes.Purge();
+	m_bFallback = false;
 
 	for( int i = 0; ; i++ )
 	{
@@ -2175,6 +2394,18 @@ void CMenuOptionsVidModesModel::Update()
 			break;
 
 		m_szModes.AddToTail( mode );
+	}
+
+	// A7 build 143 (round 143 item 9): no backend modes -> synthesize
+	// the standard ladder so the picker always has resolutions to offer
+	// (the engine applies these by size through vid_setmode W H)
+	if( m_szModes.Count() == 0 )
+	{
+		for( size_t i = 0; i < sizeof( s_vidFallbackModes ) / sizeof( s_vidFallbackModes[0] ); i++ )
+			m_szModes.AddToTail( s_vidFallbackModes[i] );
+
+		m_bFallback = true;
+		Con_Printf( "[A7] build143: video mode list empty - showing the synthesized resolution ladder\n" );
 	}
 }
 
@@ -2252,7 +2483,30 @@ void CMenuOptionsVideoModesPage::GetConfig()
 	vid_mode = bound( 0, vid_mode, vidListModel.GetRows( ));
 
 	windowMode.SetCurrentValue( fullscreen );
-	vidList.SetCurrentIndex( vid_mode );
+
+	// A7 build 143 (item 9): the synthesized ladder has no mode INDEX
+	// behind vid_mode - highlight the row matching the running width x
+	// height cvars instead of clamping a meaningless index
+	if( vidListModel.IsFallback() )
+	{
+		int match = 0;
+		int curW = (int)EngFuncs::GetCvarFloat( "width" );
+		int curH = (int)EngFuncs::GetCvarFloat( "height" );
+
+		for( int i = 0; i < vidListModel.GetRows(); i++ )
+		{
+			int w, h;
+			if( vidListModel.GetRowSize( i, w, h ) && w == curW && h == curH )
+			{
+				match = i;
+				break;
+			}
+		}
+
+		vidList.SetCurrentIndex( match );
+	}
+	else
+		vidList.SetCurrentIndex( vid_mode );
 
 	renderers.UpdateCvar( true );
 	vsync.UpdateCvar( true );
@@ -2287,6 +2541,21 @@ void CMenuOptionsVideoModesPage::SetConfig( )
 	bool isVidModeChanged = prevMode != currentModeIndex;
 	bool isWindowedModeChanged = prevFullscreen != currentWindowModeIndex;
 
+	// A7 build 143 (round 143 item 9): with the synthesized ladder, mode
+	// indices mean nothing (vid_mode never varies) - a "change" is the
+	// picked row differing from the RUNNING width x height, which is also
+	// what Revert restores from (FinalizeChanges snapshots those cvars)
+	if( vidListModel.IsFallback() )
+	{
+		int w = 0, h = 0;
+
+		if( vidListModel.GetRowSize( currentModeIndex, w, h ))
+			isVidModeChanged = w != (int)EngFuncs::GetCvarFloat( "width" )
+				|| h != (int)EngFuncs::GetCvarFloat( "height" );
+		else
+			isVidModeChanged = false;
+	}
+
 	/*
 	checking windowed mode first because it'll be checked next in
 	screen resolution changing code, otherwise when user try to
@@ -2314,8 +2583,22 @@ void CMenuOptionsVideoModesPage::SetConfig( )
 
 	if( isVidModeChanged )
 	{
-		SetMode( currentModeIndex );
-		EngFuncs::CvarSetValue( "vid_mode", currentModeIndex );
+		int w = 0, h = 0;
+
+		// A7 build 143 (round 143 item 9): the synthesized ladder has no
+		// backend index behind the row - apply by SIZE. vid_setmode W H
+		// reaches R_ChangeDisplaySettings directly (vid_common.c
+		// VID_Mode_f case 3), mode table or not, and vid_mode stays
+		// untouched because its index would address nothing; Revert goes
+		// through SetMode( prevModeX, prevModeY ) = width/height cvars,
+		// which works for BOTH lists.
+		if( vidListModel.IsFallback() && vidListModel.GetRowSize( currentModeIndex, w, h ))
+			SetMode( w, h );
+		else
+		{
+			SetMode( currentModeIndex );
+			EngFuncs::CvarSetValue( "vid_mode", currentModeIndex );
+		}
 		vidList.SetCurrentIndex( currentModeIndex );
 	}
 
