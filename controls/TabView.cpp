@@ -122,21 +122,20 @@ void CMenuTabView::Draw()
 	}
 }
 
-// A7 remake: tab strip input. Hovering (or tapping - the touch press is
-// preceded by a move) the strip selects the tab; the content area is
-// forwarded to the current page only, since every page shares one rect.
+// A7 build 145: tab strip input. Hovering only HIGHLIGHTS the strip entry
+// (Draw already paints uiPromptFocusColor while the cursor sits on it); the
+// page switches on a real press in KeyDown. Selecting on hover made every
+// strip (options, video modes, touch, mouse...) flip pages by merely moving
+// the mouse across the dialog - desktop has no use for it and on touch the
+// tap still lands in KeyDown, which computes the index from the cursor.
+// The content area is forwarded to the current page only, since every page
+// shares one rect.
 bool CMenuTabView::MouseMove( int x, int y )
 {
 	if( m_szTab.w > 0 && !m_pItems.IsEmpty() &&
 		UI_CursorInRect( m_scPos, Size( m_scSize.w, m_szTab.h )))
 	{
-		int idx = ( x - m_scPos.x ) / m_szTab.w;
-		if( m_pItems.IsValidIndex( idx ) && idx != m_iCursor )
-		{
-			SetCursor( idx );
-			PlayLocalSound( uiStatic.sounds[SND_MOVE] );
-		}
-		return true;
+		return true; // swallow: no hover-select, no hover sound
 	}
 
 	CMenuBaseItem *cur = ItemAtCursor();

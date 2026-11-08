@@ -17,20 +17,48 @@ You should have received a copy of the GNU General Public License
 along with this program; if not, write to the Free Software
 Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 */
+// A7 round 145 (item B, user: "make loading java version we did for
+// android now do for pc"): the PC loading view is now a port of the ANDROID
+// Java loading window (XashActivity.java, builds 97-144) instead of the old
+// xash-styled 640x192 box with its Console/Cancel/Skip pict-buttons. The
+// Java design, element for element:
+//
+//   collage backdrop (BackgroundLayout tiles) + 0x66000000 dim
+//   centered olive panel #4c5844 with a raised light/dark bevel
+//   title row: CS logo + "Loading..." (bold, bright #eaf0e6)
+//   gold caption rule #c4b550 (2dp, 6dp under the title)
+//   status line #d8ded3 (wraps, top-aligned context: "Connecting to X...",
+//       "Starting local game server...", "Precaching resources...")
+//   bar row: 18-segment gold progress bar over a #282e22 trough with a
+//       sunken GoldSource bevel + the Cancel button (#3e4637 raised) beside
+//       it on the left margin of the row
+//   transfer block (hidden until a server file is fetched): dlName 13sp
+//       #eaf0e6 -> dlStatus 12sp -> dlRow (16dp bar + gold bold file
+//       counter, Cancel MOVES beside this bar) -> dlFooter 11sp. No percent
+//       number next to the bar (Java build 106), no Skip/Console buttons.
+//
+// All GameUI_* L() tokens are gone from this file: round 144 proved
+// L("GameUI_EstablishingConnection") / L("GameUI_Cancel") render their raw
+// key while L("GameUI_StartingServer") resolves, so the port uses the plain
+// English literals the Java window itself uses (they match
+// resource/gameui_english.txt verbatim) - no localization can leak through.
+// The state machine, the exports, the Esc "Really disconnect?" confirm box
+// and the Android suppression guard (Android shows the Java overlay, this
+// dialog stays down there) are unchanged.
 #include "extdll_menu.h"
 #include "BaseMenu.h"
 #include "Utils.h"
 
 #include "ItemsHolder.h"
-#include "ProgressBar.h"
 #include "PicButton.h"
 #include "YesNoMessageBox.h"
+#include "FontManager.h"
 
 enum EState
 {
 	STATE_NONE,
 	STATE_MENU, // do not hide when disconnected or in game
-	STATE_DOWNLOAD, // enlarge your connectionprogress window
+	STATE_DOWNLOAD, // transfer block row is on screen
 	STATE_CONNECTING, // showing single progress
 	STATE_CONSOLE // do not show until state reset
 };
@@ -42,6 +70,112 @@ enum ESource
 	SOURCE_CREATEGAME
 };
 
+// A7 round 145: the Android loading-window palette (XashActivity "REAL CS
+// 1.6 GameUI palette" tokens) - identical values to the menu defaults.
+static const unsigned int A7_LOADING_PANEL   = 0xFF4C5844; // panel bg
+static const unsigned int A7_LOADING_ACCENT  = 0xFFC4B550; // gold rule/fill
+static const unsigned int A7_LOADING_TITLE   = 0xFFEAF0E6; // caption/name
+static const unsigned int A7_LOADING_TEXT    = 0xFFD8DED3; // status labels
+
+// dialog frame in 1024x768 menu units (Java's 340dp/12dp frame @ ~45% of
+// the usable width, vertical rhythm kept from the Java LinearLayout stack)
+#define A7_DLG_W    480
+#define A7_DLG_H    164 // title + rule + status + main bar row + pad
+#define A7_DLG_H_DL 284 // + transfer block (name/status/dlRow/footer)
+#define A7_PAD      16
+
+// ---------------------------------------------------------------------------
+// the Java LoadingBar, reborn on the PC: an 18-cell gold segmented bar over
+// the dark trough with the sunken GoldSource bevel frame (javax View.onDraw
+// port).  Links the same cvars the old CMenuProgressBar did.
+// ---------------------------------------------------------------------------
+class CMenuLoadingBar : public CMenuBaseItem
+{
+public:
+	typedef CMenuBaseItem BaseClass;
+
+	CMenuLoadingBar() : BaseClass()
+	{
+		m_flMin = 0.0f;
+		m_flMax = 100.0f;
+		m_flValue = 0.0f;
+		m_szCvarName = NULL;
+		colorBase.SetDefault( A7_LOADING_ACCENT );
+		iFlags |= QMF_INACTIVE;
+	}
+
+	void LinkCvar( const char *cvName, float flMin, float flMax )
+	{
+		m_szCvarName = cvName;
+		m_flMax = flMax;
+		m_flMin = flMin;
+	}
+
+	void SetValue( float flValue )
+	{
+		m_flValue = bound( 0.0f, flValue, 1.0f );
+		m_szCvarName = NULL;
+	}
+
+	void Draw( void ) override
+	{
+		float flProgress;
+
+		if( m_szCvarName )
+		{
+			flProgress = bound( m_flMin, EngFuncs::GetCvarFloat( m_szCvarName ), m_flMax );
+			flProgress = ( flProgress - m_flMin ) / ( m_flMax - m_flMin );
+		}
+		else flProgress = m_flValue;
+
+		// Java LoadingBar.onDraw: #282e22 trough first ...
+		UI_FillRect( m_scPos, m_scSize, 0xFF282E22 );
+
+		// ... 18 gold cells filled left to right up to the percent,
+		// gap = max(2, w * 0.012), insetY = max(2, h * 0.16)
+		const int segments = 18;
+		int gap = Q_max( 2, (int)((float)m_scSize.w * 0.012f ));
+		int segW = (int)(( m_scSize.w - gap * ( segments + 1 )) / segments );
+		int insetY = Q_max( 2, (int)((float)m_scSize.h * 0.16f ));
+		int lit = (int)( bound( 0.0f, flProgress, 1.0f ) * segments + 0.5f );
+
+		if( m_scSize.h - insetY * 2 > 0 )
+		{
+			for( int i = 0; i < lit && segW > 0; i++ )
+			{
+				int x = m_scPos.x + gap + i * ( segW + gap );
+				if( x + segW > m_scPos.x + m_scSize.w ) break;
+				UI_FillRect( x, m_scPos.y + insetY, segW, m_scSize.h - insetY * 2, colorBase );
+			}
+		}
+
+		// sunken GoldSource trough: dark top/left, light bottom/right
+		// (Java: LOADING_BORDER_DK top+left, LOADING_BAR_BORDER bottom+right)
+		UI_DrawBevel( m_scPos, m_scSize, true );
+	}
+
+private:
+	float m_flMin, m_flMax, m_flValue;
+	const char *m_szCvarName;
+};
+
+// The Java caption is 17sp BOLD against a 13sp status line; menu fonts are
+// all weight 500 except the 16px bold, so one ad-hoc Tahoma 20/1000 face
+// carries the size+weight gap. Built once and kept valid across resolution
+// changes by FontManager::VidInit's ad-hoc rebuild (build 145 item C).
+static HFont A7LoadingTitleFont( void )
+{
+	static HFont hFont = -1;
+
+	if( hFont < 0 )
+	{
+		hFont = CFontBuilder( "Tahoma", 20, 1000 ).Create();
+		if( hFont < 0 )
+			hFont = QM_BIGFONT + 1; // belt: never hand handle 0 to a label
+	}
+
+	return hFont;
+}
 
 class CMenuConnectionProgress : public CMenuBaseWindow
 {
@@ -53,69 +187,23 @@ public:
 	bool DrawAnimation() override;
 	bool KeyDown( int key ) override;
 	void Disconnect();
+	// Java window chrome (so the Cancel PicButton draws button chrome)
+	bool IsFloatDialog() const override { return true; }
 	void HandleDisconnect( void );
 	void HandlePrecache( void )
 	{
-		SetCommonText( L( "GameUI_PrecachingResources" ) );
-		commonProgress.LinkCvar( "scr_loading", 0, 100 );
+		SetCommonText( "Precaching resources..." );
+		loadBar.LinkCvar( "scr_loading", 0, 100 );
 		m_iState = STATE_CONNECTING;
 	}
 	void HandleStufftext( float flProgress, const char *pszText )
 	{
 		SetCommonText( pszText );
-		commonProgress.SetValue( flProgress );
+		loadBar.SetValue( flProgress );
 		m_iState = STATE_CONNECTING;
 	}
-	void HandleDownload( const char *pszFileName, const char *pszServerName, int iCurrent, int iTotal, const char *comment )
-	{
-		if( strstr( pszFileName, ".bsp" ) )
-			uiStatic.needMapListUpdate = true;
-		snprintf( sDownloadString, sizeof( sDownloadString ) - 1, L( "Downloading %s \nfrom %s" ), pszFileName, pszServerName );
-		snprintf( sCommonString, sizeof( sCommonString ) - 1, "%d of %d %s", iCurrent + 1, iTotal, comment );
-		m_iState = STATE_DOWNLOAD;
-		commonProgress.SetValue( (float)iCurrent/iTotal +  0.01f / iTotal * EngFuncs::GetCvarFloat("scr_download") );
-	}
-	void HandleConnect( const char *pszText )
-	{
-		if( !pszText )
-		{
-			m_iSource = SOURCE_CREATEGAME;
-			SetServer( "" );
-			SetCommonText( L( "GameUI_StartingServer" ) );
-		}
-		else
-		{
-			m_iSource = SOURCE_SERVERBROWSER;
-			SetServer( pszText );
-			SetCommonText( L( "GameUI_EstablishingConnection" ) );
-		}
-
-		commonProgress.LinkCvar( "scr_loading", 0, 100 );
-	}
-
-	void SetCommonText( const char *pszText )
-	{
-		Q_strncpy( sCommonString, pszText, sizeof( sCommonString ) );
-		// snprintf( sCommonString, sizeof( sCommonString ) - 1, "%s", pszText );
-	}
-	void SetServer( const char *pszName )
-	{
-		if( m_iSource == SOURCE_CREATEGAME )
-		{
-			Q_strncpy( sTitleString, L( "GameUI_StartingServer" ), sizeof( sTitleString ) );
-		}
-		else if( !pszName[0] )
-		{
-			Q_strncpy( sTitleString, L( "GameUI_StartingServer" ), sizeof( sTitleString ) );
-		}
-		else
-		{
-			snprintf( sTitleString, sizeof( sTitleString ) - 1,
-				"%s %s", L( "GameUI_EstablishingConnection" ), pszName );
-		}
-
-		commonProgress.SetValue( 0 );
-	}
+	void HandleDownload( const char *pszFileName, const char *pszServerName, int iCurrent, int iTotal, const char *comment );
+	void HandleConnect( const char *pszText );
 
 	// A7 build 96: guaranteed visible + ACTIVE dialog on every load-phase
 	// call. IsVisible() alone is not enough: CWindowStack::Remove leaves a
@@ -127,39 +215,52 @@ public:
 	// and re-selects it as active (Init() inside is idempotent).
 	void EnsureShown( void )
 	{
-		if( IsVisible( ) && m_pStack->Current( ) == this && !FBitSet( iFlags, QMF_CLOSING ))
-			VidInit( ); // already on top: re-layout only (192 -> 256 box)
+		if( IsVisible( ) && m_pStack->Current( ) == this && !FBitSet( iFlags, QMF_CLOSING  ))
+			VidInit( ); // already on top: re-layout only
 		else Show( );   // stale/closing/not-top: (re)activate strictly
+	}
+
+	void SetCommonText( const char *pszText )
+	{
+		Q_strncpy( sCommonString, pszText, sizeof( sCommonString ));
 	}
 
 	EState m_iState;
 	ESource m_iSource;
 private:
 	CMenuBackgroundBitmap background;
-	// A7 build 94: full-screen game backdrop behind the dialog - the PC
-	// reference loading screen shows the CS background collage
-	// (resource/*_loading.tga tiles) with the dialog centered on top,
-	// never a black screen. not an item: it must cover the whole screen
-	// beyond this dialog's 640x192 rect, so it stays parentless and is
-	// VidInit'd/Drawn from _VidInit()/Draw() directly
+	// full-screen game collage behind the panel (never a black screen)
 	CMenuBackgroundBitmap screenBg;
-	CMenuProgressBar commonProgress;
-	CMenuProgressBar downloadProgress;
-	CMenuPicButton consoleButton;
-	CMenuPicButton disconnectButton;
-	CMenuPicButton skipButton;
+	CMenuLoadingBar loadBar;        // main phase bar (scr_loading)
+	CMenuLoadingBar dlBar;          // transfer bar (scr_download)
+	CMenuPicButton cancelButton;    // Java "Cancel" beside whichever bar runs
+	CMenuPicButton consoleButton;   // keyboard console path only, never drawn
 	CMenuYesNoMessageBox dialog;
-	CMenuAction title;
-	CMenuAction downloadText;
-	CMenuAction commonText;
-	char sTitleString[256];
-	char sDownloadString[512];
+	CMenuAction title;               // [logo] "Loading..."
+	CMenuAction statusText;          // live status line
+	CMenuAction dlName;              // transfer file name
+	CMenuAction dlStatus;            // "Downloading from server..."
+	CMenuAction dlCount;             // gold bare file counter
+	CMenuAction dlFooter;            // "N of M comment"
+	HIMAGE logoPic;
 	char sCommonString[512];
+	char sDlFile[256];
+	char sDlLastFile[256];
+	char sDlStatus[128];
+	char sDlFooter[256];
+	char sDlCountString[16];
+	int  m_iDlFiles;
 };
 
 CMenuConnectionProgress::CMenuConnectionProgress() : CMenuBaseWindow( "ConnectionProgress" )
 {
-	sDownloadString[0] = sCommonString[0] = sTitleString[0] = '\0';
+	// Java: the status line starts as "Loading..." and the engine's phase
+	// text (loadingStatus) overwrites it as the load advances
+	Q_strncpy( sCommonString, "Loading...", sizeof( sCommonString ));
+	sDlFile[0] = sDlLastFile[0] = '\0';
+	sDlStatus[0] = sDlFooter[0] = sDlCountString[0] = '\0';
+	Q_strncpy( sDlCountString, "0", sizeof( sDlCountString ));
+	logoPic = 0;
 	m_iSource = SOURCE_CONSOLE;
 	m_iState = STATE_NONE;
 	szName = "ConnectionProgress";
@@ -215,8 +316,8 @@ void CMenuConnectionProgress::HandleDisconnect( void )
 			m_iSource = SOURCE_CONSOLE;
 		}
 	}
-	
-	SetCommonText( L( "GameUI_Disconnected" ) );
+
+	SetCommonText( "Disconnected" );
 
 	m_iState = STATE_NONE;
 	VidInit();
@@ -234,15 +335,79 @@ void CMenuConnectionProgress::Disconnect()
 	EngFuncs::ClientCmd( false, "disconnect\n");
 }
 
+// Java loadingShow(serverAddr) -> status "Connecting to X...", or "Loading..."
+// when there is no server (local game: the engine's own phase text follows,
+// "Starting local game server...");
+void CMenuConnectionProgress::HandleConnect( const char *pszText )
+{
+	if( pszText && pszText[0] )
+	{
+		m_iSource = SOURCE_SERVERBROWSER;
+		snprintf( sCommonString, sizeof( sCommonString ), "Connecting to %s...", pszText );
+	}
+	else
+	{
+		m_iSource = SOURCE_CREATEGAME;
+		SetCommonText( "Starting local game server..." );
+	}
+
+	// build 103: the file counter restarts per load (mLoadingDlFiles = 0
+	// at the top of showLoadingOnUiThread)
+	m_iDlFiles = 0;
+	sDlLastFile[0] = sDlFile[0] = sDlStatus[0] = sDlFooter[0] = '\0';
+	Q_strncpy( sDlCountString, "0", sizeof( sDlCountString ));
+
+	loadBar.LinkCvar( "scr_loading", 0, 100 );
+}
+
+// Java loadingDownload(file, percent, status, footer): when file is null/empty
+// the whole transfer block folds away (handled in _VidInit by state), while a
+// file is fetched the block opens and the bare gold counter counts every file
+// this load pulls - no percent sign (build 103/106).
+void CMenuConnectionProgress::HandleDownload( const char *pszFileName, const char *pszServerName, int iCurrent, int iTotal, const char *comment )
+{
+	if( pszFileName && strstr( pszFileName, ".bsp" ))
+		uiStatic.needMapListUpdate = true;
+
+	if( pszFileName && pszFileName[0] )
+	{
+		Q_strncpy( sDlFile, pszFileName, sizeof( sDlFile ));
+
+		if( strcmp( pszFileName, sDlLastFile ) != 0 )
+		{
+			Q_strncpy( sDlLastFile, pszFileName, sizeof( sDlLastFile ));
+			m_iDlFiles++;
+			snprintf( sDlCountString, sizeof( sDlCountString ), "%d", m_iDlFiles );
+		}
+	}
+
+	// the engine's own transfer status text (cl_main: "Downloading from
+	// server..."), verbatim - same literal the Java window receives
+	Q_strncpy( sDlStatus, "Downloading from server...", sizeof( sDlStatus ));
+
+	if( iTotal > 0 )
+		snprintf( sDlFooter, sizeof( sDlFooter ), "%d of %d %s",
+			iCurrent + 1, iTotal, comment ? comment : "" );
+	else if( comment && comment[0] )
+		Q_strncpy( sDlFooter, comment, sizeof( sDlFooter ));
+	else sDlFooter[0] = '\0';
+
+	m_iState = STATE_DOWNLOAD;
+	// NOTE: the MAIN bar is untouched here - like the Java window it keeps
+	// reading its own phase source (scr_loading); only dlBar shows bytes
+}
+
 void CMenuConnectionProgress::_Init( void )
 {
 	iFlags |= QMF_DIALOG;
 
 	background.bForceColor = true;
-	background.colorBase = uiPromptBgColor;
+	background.colorBase = A7_LOADING_PANEL;
 
+	// the Java window draws no Console button, but the console key still
+	// opens the console through this (hidden) item's handler - unchanged
 	consoleButton.SetPicture( PC_CONSOLE );
-	consoleButton.szName = L( "GameUI_Console" );
+	consoleButton.szName = "Console";
 	SET_EVENT_MULTI( consoleButton.onReleased,
 	{
 		CMenuConnectionProgress *parent = (CMenuConnectionProgress *)pSelf->Parent();
@@ -253,93 +418,135 @@ void CMenuConnectionProgress::_Init( void )
 		UI_SetActiveMenu( false );
 	});
 	consoleButton.bEnableTransitions = false;
+	consoleButton.Hide(); // no visible Console button (Java has neither)
 
-	disconnectButton.SetPicture( PC_DISCONNECT );
-	disconnectButton.szName = L( "GameUI_Cancel" );
-	disconnectButton.onReleased = VoidCb( &CMenuConnectionProgress::Disconnect );
-	disconnectButton.bEnableTransitions = false;
+	cancelButton.szName = "Cancel"; // Java: text button, #eaf0e6 on #3e4637
+	cancelButton.onReleased = VoidCb( &CMenuConnectionProgress::Disconnect );
+	cancelButton.bEnableTransitions = false;
+	cancelButton.colorBase = A7_LOADING_TITLE;
+	cancelButton.iFlags &= ~QMF_DROPSHADOW;
 
-	dialog.SetMessage( L( "Really disconnect?" ) );
+	dialog.SetMessage( "Really disconnect?" );
 	dialog.Link( this );
 	dialog.onPositive = VoidCb( &CMenuConnectionProgress::Disconnect );
 
 	title.iFlags = QMF_INACTIVE|QMF_DROPSHADOW;
-	// A7 build 63: video reference - the real VGUI loading dialog has a
-	// "Loading..." caption top-left; the live status stays in commonText
 	title.eTextAlignment = QM_LEFT;
-	title.szName = L( "Loading..." );
+	title.szName = "Loading...";           // Java caption, verbatim
+	title.colorBase = A7_LOADING_TITLE;
+	title.font = A7LoadingTitleFont();
+	title.charSize = 20;
 
-	skipButton.szName = L( "Skip" );
-	skipButton.onReleased.SetCommand( true, "http_skip\n" );
-	skipButton.bEnableTransitions = false;
+	statusText.iFlags = QMF_INACTIVE;
+	statusText.eTextAlignment = QM_LEFT;
+	statusText.szName = sCommonString;
+	statusText.SetCharSize( QM_DEFAULTFONT );
+	statusText.colorBase = A7_LOADING_TEXT;
 
-	downloadText.iFlags = commonText.iFlags = QMF_INACTIVE;
-	downloadText.szName = sDownloadString;
-	commonText.szName = sCommonString;
+	dlName.iFlags = QMF_INACTIVE;
+	dlName.eTextAlignment = QM_LEFT;
+	dlName.szName = sDlFile;
+	dlName.SetCharSize( QM_DEFAULTFONT );
+	dlName.colorBase = A7_LOADING_TITLE;
 
-	downloadProgress.LinkCvar( "scr_download", 0.0f, 100.0f );
+	dlStatus.iFlags = QMF_INACTIVE;
+	dlStatus.eTextAlignment = QM_LEFT;
+	dlStatus.szName = sDlStatus;
+	dlStatus.SetCharSize( QM_DEFAULTFONT );
+	dlStatus.colorBase = A7_LOADING_TEXT;
+
+	dlCount.iFlags = QMF_INACTIVE;
+	dlCount.eTextAlignment = QM_LEFT;
+	dlCount.szName = sDlCountString;
+	dlCount.SetCharSize( QM_BOLDFONT );    // gold bare counter, bold
+	dlCount.colorBase = A7_LOADING_ACCENT;
+
+	dlFooter.iFlags = QMF_INACTIVE;
+	dlFooter.eTextAlignment = QM_LEFT;
+	dlFooter.szName = sDlFooter;
+	dlFooter.SetCharSize( QM_TINYFONT );   // Java: 11sp footer
+	dlFooter.colorBase = A7_LOADING_TEXT;
+
+	loadBar.LinkCvar( "scr_loading", 0, 100 );
+	dlBar.LinkCvar( "scr_download", 0.0f, 100.0f );
+
+	// stock CS wordmark from the gamedir (resource/logo_game.tga, the same
+	// file the 1.6 GameUI ships) - drawn in Draw() at the title row
+	logoPic = EngFuncs::PIC_Load( "resource/logo_game.tga", PIC_NOFLIP_TGA );
 
 	AddItem( background );
-	AddItem( consoleButton );
-	AddItem( disconnectButton );
-	AddItem( downloadProgress );
-	AddItem( commonProgress );
 	AddItem( title );
-	AddItem( skipButton );
-	AddItem( downloadText );
-	AddItem( commonText );
+	AddItem( statusText );
+	AddItem( loadBar );
+	AddItem( cancelButton );
+	AddItem( dlName );
+	AddItem( dlStatus );
+	AddItem( dlBar );
+	AddItem( dlCount );
+	AddItem( dlFooter );
+	AddItem( consoleButton );
 }
 
 void CMenuConnectionProgress::_VidInit( void )
 {
-	int dlg_h = ( m_iState == STATE_DOWNLOAD )?256:192;
+	bool bDownload = ( m_iState == STATE_DOWNLOAD );
+	int dlg_h = bDownload ? A7_DLG_H_DL : A7_DLG_H;
 	int dlg_y = 768 / 2 - dlg_h / 2;
-	int cursor = dlg_h;
 
-	SetRect( DLG_X + 192, dlg_y, 640, dlg_h );
+	// Java: FrameLayout.LayoutParams gravity CENTER - the frame sits in the
+	// middle of the 1024x768 menu space (letterbox offset applied after)
+	SetRect(( uiStatic.width - A7_DLG_W ) / 2, dlg_y, A7_DLG_W, dlg_h );
 	pos.x += uiStatic.xOffset;
 	pos.y += uiStatic.yOffset;
 
-	title.SetCharSize( QM_DEFAULTFONT );
-	title.SetRect( 20, 16, 600, 20 );
+	// title row: [cs logo 256x16 @(16,22)] "Loading..." (Java build 97)
+	title.SetRect( A7_PAD + 264, 16, A7_DLG_W - A7_PAD * 2 - 264, 28 );
 
-	cursor -= 44;
-	consoleButton.SetRect( 188, cursor, UI_BUTTONS_WIDTH / 2, UI_BUTTONS_HEIGHT );
-	disconnectButton.SetRect( 338, cursor, UI_BUTTONS_WIDTH / 2, UI_BUTTONS_HEIGHT );
+	// gold caption rule (2dp tall, 6dp under the title) - drawn in Draw()
+	// where it lands between the rows
 
-	// A7 build 94: size the full-screen backdrop (parentless -> its
-	// VideInit picks ScreenWidth/Height and the collage layout itself)
-	screenBg.VidInit();
+	// status line: 8dp under the rule, wraps like setSingleLine(false)
+	statusText.SetRect( A7_PAD, 66, A7_DLG_W - A7_PAD * 2, 40 );
 
-	if( gpGlobals->developer )
-		consoleButton.Hide();
+	// main bar row: segmented bar fills the width, Cancel sits beside it
+	// (Java barRow: bar weight=1, cancel 26dp tall with 8dp left margin)
+	loadBar.SetRect( A7_PAD, 118, 330, 26 );
+	cancelButton.SetRect( A7_DLG_W - A7_PAD - 110, 114, 110, 34 );
 
-	cursor -= 30;
-	commonProgress.SetRect( 20, cursor, 600, 20 );
-
-	cursor -= 50;
-	commonText.SetCharSize( QM_SMALLFONT );
-	commonText.SetRect( 20, cursor, 500, 40 );
-
-	if( m_iState == STATE_DOWNLOAD )
+	if( bDownload )
 	{
-		cursor -= 30;
-		downloadProgress.Show();
-		downloadProgress.SetRect( 20, cursor, 500, 20 );
-		skipButton.SetRect( 540, cursor, UI_BUTTONS_WIDTH / 2, UI_BUTTONS_HEIGHT );
-		skipButton.Show();
+		// transfer block: name -> status -> dlRow(bar + bare counter +
+		// Cancel, moved down beside THIS bar) -> footer (all hidden on
+		// Android until loadingDownload supplies a file)
+		dlName.Show();
+		dlStatus.Show();
+		dlBar.Show();
+		dlCount.Show();
+		dlFooter.SetVisibility( sDlFooter[0] != '\0' );
+		dlName.SetRect( A7_PAD, 160, A7_DLG_W - A7_PAD * 2, 20 );
+		dlStatus.SetRect( A7_PAD, 184, A7_DLG_W - A7_PAD * 2, 18 );
+		dlBar.SetRect( A7_PAD, 214, 282, 26 );
+		dlCount.SetRect( 306, 214, 42, 26 );
+		dlFooter.SetRect( A7_PAD, 252, A7_DLG_W - A7_PAD * 2, 16 );
 
-		cursor -= 50;
-		downloadText.Show();
-		downloadText.SetCharSize( QM_SMALLFONT );
-		downloadText.SetRect( 20, cursor, 500, 40 );
+		// moveLoadingCancel(mLoadingDlRow) - Cancel rides beside the
+		// transfer bar while one runs
+		cancelButton.SetRect( A7_DLG_W - A7_PAD - 110, 210, 110, 34 );
 	}
 	else
 	{
-		downloadProgress.Hide();
-		skipButton.Hide();
-		downloadText.Hide();
+		dlName.Hide();
+		dlStatus.Hide();
+		dlBar.Hide();
+		dlCount.Hide();
+		dlFooter.Hide();
 	}
+
+	// no visible Console/Skip buttons on this window (Java has neither)
+	consoleButton.Hide();
+
+	// full-screen backdrop: collage + light dim pick up the real screen
+	screenBg.VidInit();
 
 	CalcPosition();
 	CalcSizes();
@@ -353,7 +560,7 @@ bool CMenuConnectionProgress::DrawAnimation()
 
 void CMenuConnectionProgress::Draw( void )
 {
-	if( ( m_iState != STATE_MENU && CL_IsActive() ) || ( m_iState == STATE_NONE && m_pStack->Current() == this ) )
+	if( ( m_iState != STATE_MENU && CL_IsActive() ) || ( m_iState == STATE_NONE && m_pStack->Current() == this ))
 	{
 		m_iState = STATE_NONE;
 		// A7 build 93: take the Esc/"Really disconnect?" confirmation box
@@ -364,26 +571,54 @@ void CMenuConnectionProgress::Draw( void )
 		Hide();
 		return;
 	}
-	// A7 build 94: the game's background collage fills the screen behind
-	// the dialog (reference: PC loading screen = art + centered box, not
-	// a black screen); the light GameUI dim stays on top of the art
+
+	// Java backdrop: collage fills the frame, then the 0x66 dim on top so
+	// the compact panel stays readable (was 0x40 before the port)
 	screenBg.Draw();
-	UI_FillRect( 0,0, gpGlobals->scrWidth, gpGlobals->scrHeight, 0x40000000 );
+	UI_FillRect( 0, 0, gpGlobals->scrWidth, gpGlobals->scrHeight, 0x66000000 );
+
 	CMenuBaseWindow::Draw();
+
+	// raised panel bevel: light top/left, dark bottom/right (Java
+	// BevelDrawable raised = LOADING_BORDER_LT over LOADING_BORDER_DK)
+	UI_DrawBevel( m_scPos, m_scSize, false );
+
+	// gold caption rule: full inner width, 4 units tall, 8 under the title
+	// row + 4 above the status line (Java ruleLp.topMargin 6dp, height 2dp)
+	{
+		int ruleX = m_scPos.x + (int)( A7_PAD * uiStatic.scaleX );
+		int ruleW = m_scSize.w - (int)( A7_PAD * 2 * uiStatic.scaleX );
+		int ruleY = m_scPos.y + (int)( 52 * uiStatic.scaleY );
+		int ruleH = Q_max( 1, (int)( 4 * uiStatic.scaleY ));
+
+		UI_FillRect( ruleX, ruleY, ruleW, ruleH, A7_LOADING_ACCENT );
+	}
+
+	// CS logo, left of the caption (Java titleRow logo 18dp, FIT_CENTER).
+	// Drawn ADDITIVE: the stock wordmark TGA is white-on-transparent and
+	// this engine upload flattens the alpha to black, so a normal draw
+	// stamps a black bar behind it - additive drops the black to nothing
+	// and keeps the white letters (GameUI draws it the same way)
+	if( logoPic )
+	{
+		int lx = m_scPos.x + (int)( A7_PAD * uiStatic.scaleX );
+		int ly = m_scPos.y + (int)( 22 * uiStatic.scaleY );
+		int lw = (int)( 256 * uiStatic.scaleX );
+		int lh = (int)( 16 * uiStatic.scaleY );
+
+		EngFuncs::PIC_Set( logoPic, 255, 255, 255, 255 );
+		EngFuncs::PIC_DrawAdditive( lx, ly, lw, lh );
+	}
 }
 
 ADD_MENU3( menu_connectionprogress, CMenuConnectionProgress, UI_ConnectionProgress_f );
 
-// A7 build 126 (item 5, user: "menu of after finish download with cancel
-// original xash, remove it"): on Android the platform loading window
-// (XashActivity overlay - opaque, with its own Cancel) IS the join view.
-// This xash-styled dialog (Cancel/Skip/Console buttons + the Esc "Really
-// disconnect?" box) used to sit on top of it after the download finished.
-// Every door funnels through these exports - the engine wrappers in
-// cl_gameui.c, ServerBrowser.cpp's direct call and the connectionprogress
-// console command - so one guard removes it everywhere. Disconnect stays:
-// with the state machine never leaving STATE_NONE, HandleDisconnect is a
-// no-op, and the engine reports connection failures itself.
+// A7 build 126 (item 5): on Android the platform loading window (the Java
+// XashActivity overlay - opaque, with its own Cancel) IS the join view, so
+// every door funnels through these guards and this dialog stays down there.
+// Unchanged from the pre-port build: Disconnect stays, with the state machine
+// never leaving STATE_NONE HandleDisconnect is a no-op, and the engine
+// reports connection failures itself.
 #if XASH_ANDROID
 static bool a7_conn_dialog_logged = false;
 
@@ -421,7 +656,8 @@ void UI_ConnectionProgress_Download( const char *pszFileName, const char *pszSer
 	// per-queued-file Show() would restart the open animation every time
 	menu_connectionprogress->m_iSource = SOURCE_CONSOLE;
 
-	// A7 build 96: strictly visible+active (re-layouts 192 -> 256 box)
+	// A7 build 96: strictly visible+active (re-lays the frame out for the
+	// transfer block - 164 -> 284 like Android's wrap-content box)
 	menu_connectionprogress->EnsureShown();
 }
 
@@ -432,20 +668,19 @@ void UI_ConnectionProgress_DownloadEnd( void )
 	if( menu_connectionprogress->m_iState == STATE_CONSOLE )
 		return;
 
-	// A7 build 94: only meaningful while the download box is the one on
-	// screen (the dialog's own Cancel already moved it out of this state,
-	// so the http_clear that follows becomes a no-op here)
+	// only meaningful while the transfer block is the one on screen (the
+	// dialog's own Cancel already moved it out of this state, so the
+	// http_clear that follows becomes a no-op here)
 	if( menu_connectionprogress->m_iState != STATE_DOWNLOAD )
 		return;
 
 	// downloads over - back to the resource-loading state so scr_loading
-	// drives the bar again. NO HandleDisconnect on purpose: its restore
-	// branch would pop Main + ServerBrowser over a still-running load
+	// drives the main bar again. NO HandleDisconnect on purpose: its
+	// restore branch would pop Main + ServerBrowser over a still-running load
 	menu_connectionprogress->HandlePrecache();
 	menu_connectionprogress->m_iSource = SOURCE_CONSOLE;
 
 	// A7 build 96: EnsureShown keeps the dialog strictly visible+active
-	// (see its comment - a stale closing instance never drew, black load)
 	menu_connectionprogress->EnsureShown();
 }
 
@@ -486,8 +721,11 @@ void UI_ConnectionProgress_ChangeLevel( void )
 	if( menu_connectionprogress->m_iState == STATE_CONSOLE )
 		return;
 
+	// changelevel keeps the ORIGINAL source semantics (HandleConnect would
+	// switch the source to CREATEGAME and pop the create-game window on a
+	// later disconnect) - only the phase text/state change, like before
 	menu_connectionprogress->m_iState = STATE_MENU;
-	menu_connectionprogress->SetCommonText( L( "Changing level on server" ) );
+	menu_connectionprogress->SetCommonText( "Changing level on server" );
 	menu_connectionprogress->EnsureShown();
 }
 
@@ -498,50 +736,47 @@ void UI_ConnectionProgress_ParseServerInfo( const char *server )
 	if( menu_connectionprogress->m_iState == STATE_CONSOLE )
 		return;
 
-	menu_connectionprogress->SetServer( server );
+	menu_connectionprogress->SetCommonText( "Parsing server info..." );
 	menu_connectionprogress->m_iState = STATE_CONNECTING;
-	menu_connectionprogress->SetCommonText( L( "GameUI_ParseServerInfo" ) );
 	menu_connectionprogress->EnsureShown();
 }
 
 void UI_ConnectionProgress_f( void )
 {
-	if( !strcmp( EngFuncs::CmdArgv(1), "disconnect" ) )
+	if( !strcmp( EngFuncs::CmdArgv(1), "disconnect" ))
 	{
 		UI_ConnectionProgress_Disconnect();
 	}
-	else if( !strcmp( EngFuncs::CmdArgv(1), "dl" ) )
+	else if( !strcmp( EngFuncs::CmdArgv(1), "dl" ))
 	{
 		UI_ConnectionProgress_Download( EngFuncs::CmdArgv( 2 ), EngFuncs::CmdArgv( 3 ), atoi(EngFuncs::CmdArgv( 4 )), atoi(EngFuncs::CmdArgv( 5 )), EngFuncs::CmdArgv( 6 ) );
 	}
-	else if( !strcmp( EngFuncs::CmdArgv(1), "dlend" ) )
+	else if( !strcmp( EngFuncs::CmdArgv(1), "dlend" ))
 	{
 		UI_ConnectionProgress_DownloadEnd();
 	}
-	else if( !strcmp( EngFuncs::CmdArgv(1), "stufftext" ) )
+	else if( !strcmp( EngFuncs::CmdArgv(1), "stufftext" ))
 	{
-		// A7 build 126 (item 5): the only branch that bypasses the
-		// guarded exports - same suppression, dialog stays down on Android
 		A7_CONN_DIALOG_OFF( );
 		menu_connectionprogress->HandleStufftext( atof( EngFuncs::CmdArgv( 2 ) ), EngFuncs::CmdArgv( 3 ) );
 	}
-	else if( !strcmp( EngFuncs::CmdArgv(1), "precache" ) )
+	else if( !strcmp( EngFuncs::CmdArgv(1), "precache" ))
 	{
 		UI_ConnectionProgress_Precache();
 	}
-	else if( !strcmp( EngFuncs::CmdArgv(1), "menu" ) )
+	else if( !strcmp( EngFuncs::CmdArgv(1), "menu" ))
 	{
 		UI_ConnectionProgress_Connect( EngFuncs::CmdArgv(2) );
 	}
-	else if( !strcmp( EngFuncs::CmdArgv(1), "localserver" ) )
+	else if( !strcmp( EngFuncs::CmdArgv(1), "localserver" ))
 	{
 		UI_ConnectionProgress_Connect( NULL );
 	}
-	else if( !strcmp( EngFuncs::CmdArgv(1), "changelevel" ) )
+	else if( !strcmp( EngFuncs::CmdArgv(1), "changelevel" ))
 	{
 		UI_ConnectionProgress_ChangeLevel();
 	}
-	else if( !strcmp( EngFuncs::CmdArgv(1), "serverinfo" ) )
+	else if( !strcmp( EngFuncs::CmdArgv(1), "serverinfo" ))
 	{
 		UI_ConnectionProgress_ParseServerInfo( EngFuncs::CmdArgv(2) );
 	}

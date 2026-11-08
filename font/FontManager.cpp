@@ -92,7 +92,55 @@ void CFontManager::VidInit( void )
 	// heights below stay DESIGN units; CFontBuilder::Create bakes the scale.
 	if( !prevScale || fabs( scale - prevScale ) > 0.01f )
 	{
+		// A7 build 145 (round 145 item C, user: "after changing screen
+		// resolution on PC the GameUI becomes invisible"): DeleteAllFonts()
+		// dropped EVERY font, but only the standard set below was built
+		// again. The ad-hoc fonts menus and the client dll make through
+		// CFontBuilder (the main menu rows' SetCustomTextStyle, the
+		// BuildFont API) kept integer handles into a list that no longer
+		// had those slots - GetIFontFromHandle returned NULL, so every
+		// control holding one drew NOTHING after a video mode change while
+		// a fresh boot (fonts created after VidInit's standard set) drew
+		// fine. Snapshot everything after the standard set and rebuild it
+		// in the same order on top: the standard fonts land on their
+		// forced handles again and the ad-hoc ones get the exact handles
+		// they had before, so every cached HFont in the menus and in the
+		// client dll stays valid across the scale change.
+		struct adhoc_font_t
+		{
+			char   name[32];
+			int    designTall, weight, flags;
+			int    blur, outline, scanOffset;
+			float  brighten, scanScale;
+		};
+		CUtlVector<adhoc_font_t> adhoc;
+		// the standard set this block is about to build, in order: the six
+		// forced handles + the two blur faces (unless lowmemory) + console
+		const int standardCount = 6 + ( uiStatic.lowmemory ? 0 : 2 ) + 1;
+
+		for( int i = standardCount; i < m_Fonts.Count(); i++ )
+		{
+			CBaseFont *font = m_Fonts[i];
+
+			if( !font ) continue; // no DeleteFont callers today; belt only
+
+			adhoc_font_t f;
+			Q_strncpy( f.name, font->GetName(), sizeof( f.name ));
+			// a font built without a recorded design height falls back to
+			// its device height: keeps the handle alive (best effort)
+			f.designTall = font->m_iDesignTall > 0 ? font->m_iDesignTall : font->GetRequestTall();
+			f.weight     = font->GetWeight();
+			f.flags      = font->GetFlags();
+			f.blur       = font->m_iBlur;
+			f.brighten   = font->m_fBrighten;
+			f.outline    = font->m_iOutlineSize;
+			f.scanOffset = font->m_iScanlineOffset;
+			f.scanScale  = font->m_fScanlineScale;
+			adhoc.AddToTail( f );
+		}
+
 		DeleteAllFonts();
+
 		uiStatic.hDefaultFont = CFontBuilder( DEFAULT_MENUFONT, UI_MED_CHAR_HEIGHT, DEFAULT_WEIGHT )
 			.SetHandleNum( QM_DEFAULTFONT )
 			.Create();
@@ -126,6 +174,22 @@ void CFontManager::VidInit( void )
 		uiStatic.hConsoleFont = CFontBuilder( DEFAULT_CONFONT, UI_CONSOLE_CHAR_HEIGHT, 500 )
 			.SetOutlineSize()
 			.Create();
+
+		// build 145: re-make the ad-hoc fonts on top, in their original
+		// order - each CFontBuilder here appends, so they land on the very
+		// handles they occupied before DeleteAllFonts (see snapshot above)
+		for( int i = 0; i < adhoc.Count(); i++ )
+		{
+			const adhoc_font_t &f = adhoc[i];
+
+			CFontBuilder( f.name, f.designTall, f.weight )
+				.SetBlurParams( f.blur, f.brighten )
+				.SetOutlineSize( f.outline )
+				.SetScanlineParams( f.scanOffset, f.scanScale )
+				.SetFlags( f.flags )
+				.Create();
+		}
+
 		prevScale = scale;
 	}
 }
@@ -537,6 +601,11 @@ HFont CFontBuilder::Create()
 {
 	CBaseFont *font;
 
+	// A7 build 145: keep the DESIGN height before the device scale is baked
+	// in below - VidInit's scale-change rebuild needs it to re-raster this
+	// font at the new ui scale instead of orphaning its handle
+	int designTall = m_iTall;
+
 	// build 90: bake the current UI scale into the raster height ONCE, for
 	// every builder (menus/Main.cpp data-driven labels create ad-hoc
 	// CFontBuilder("Tahoma", 26, 600) fonts that never saw uiStatic.scaleY).
@@ -588,6 +657,8 @@ HFont CFontBuilder::Create()
 	// build 90: record the requested device height as the font's identity;
 	// backends may pad m_iTall for their own line box (WinAPI adds leading)
 	font->m_iRequestTall = m_iTall;
+	// build 145: and the design height for the VidInit rebuild (see above)
+	font->m_iDesignTall = designTall;
 
 	g_FontMgr->UploadTextureForFont( font );
 

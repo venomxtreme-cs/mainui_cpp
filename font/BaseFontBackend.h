@@ -104,6 +104,13 @@ protected:
 	int	 m_iTall, m_iWeight, m_iFlags, m_iHeight, m_iMaxCharWidth;
 	// build 90: un-padded device height the builder asked for (see GetRequestTall)
 	int  m_iRequestTall;
+	// A7 build 145 (round 145 item C, user: "after changing screen resolution
+	// on PC the GameUI becomes invisible"): the DESIGN height CFontBuilder was
+	// given, i.e. the device height BEFORE uiStatic.scaleY was baked in.
+	// CFontManager::VidInit rebuilds every ad-hoc font from it after a video
+	// mode change, so a scale change re-rasters them instead of orphaning
+	// their handles (see FontManager.cpp VidInit)
+	int  m_iDesignTall;
 	int  m_iAscent;
 	bool m_bAdditive;
 

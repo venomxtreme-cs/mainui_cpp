@@ -20,7 +20,7 @@ GNU General Public License for more details.
 
 CBaseFont::CBaseFont()
 	: m_iTall(), m_iWeight(), m_iFlags(),
-	m_iHeight(), m_iMaxCharWidth(), m_iRequestTall(), m_iAscent(),
+	m_iHeight(), m_iMaxCharWidth(), m_iRequestTall(), m_iDesignTall(), m_iAscent(),
 	m_iBlur(), m_fBrighten(),
 	m_iEllipsisWide( 0 ),
 	m_glyphs(0, 0), m_ABCCache( 0, 0 )
