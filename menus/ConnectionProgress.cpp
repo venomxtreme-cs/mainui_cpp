@@ -84,6 +84,23 @@ static const unsigned int A7_LOADING_TEXT    = 0xFFD8DED3; // status labels
 #define A7_DLG_H_DL 284 // + transfer block (name/status/dlRow/footer)
 #define A7_PAD      16
 
+// Title row of the Java loading window (XashActivity titleRow): an 18dp
+// SQUARE ImageView holding R.drawable.cs_logo - the GOLD soldier
+// silhouette (cs_logo.png, 256x331, FIT_CENTER) - with an 8dp right
+// margin, caption right next to it. Round 146 (item B): the PC port had
+// the retail 256x16 "Counter-Strike" WORDMARK pushed far left with the
+// title starting at x=280, which does not match Android at all (user:
+// "not same like android in logo and others"). dp -> menu units keeps the
+// same ~1.45 factor as the bar row (Java 18dp bar = our 26 units):
+// box 18dp = 26 units square, margin 8dp = 11 units, FIT_CENTER of the
+// 256x331 art inside the square = 20x26 (aspect preserved, centered).
+#define A7_LOGO_X   16              // logo box, left inner pad
+#define A7_LOGO_Y   17              // centered in the 16..44 title row
+#define A7_LOGO_W   26              // Java 18dp square
+#define A7_LOGO_H   26
+#define A7_LOGO_IW  20              // art inside the box after FIT_CENTER
+#define A7_TITLE_X  ( A7_LOGO_X + A7_LOGO_W + 11 ) // 53: box + 8dp margin
+
 // ---------------------------------------------------------------------------
 // the Java LoadingBar, reborn on the PC: an 18-cell gold segmented bar over
 // the dark trough with the sunken GoldSource bevel frame (javax View.onDraw
@@ -470,9 +487,16 @@ void CMenuConnectionProgress::_Init( void )
 	loadBar.LinkCvar( "scr_loading", 0, 100 );
 	dlBar.LinkCvar( "scr_download", 0.0f, 100.0f );
 
-	// stock CS wordmark from the gamedir (resource/logo_game.tga, the same
-	// file the 1.6 GameUI ships) - drawn in Draw() at the title row
-	logoPic = EngFuncs::PIC_Load( "resource/logo_game.tga", PIC_NOFLIP_TGA );
+	// Round 146 (item B): the title-row logo is now the ANDROID one -
+	// the GOLD soldier silhouette (res/drawable-nodpi/cs_logo.png, the
+	// R.drawable.cs_logo the Java titleRow shows at 18dp FIT_CENTER),
+	// shipped to the gamedir as resource/cs_logo.tga. The retail
+	// resource/logo_game.tga WORDMARK above was the old PC-only choice
+	// and is what the user called out as "not same like android".
+	// belt: PIC_Load returns 0 when the asset is missing - an install
+	// without it still gets a working window (the caption starts flush
+	// at the inner pad and Draw() skips the logo; see _VidInit)
+	logoPic = EngFuncs::PIC_Load( "resource/cs_logo.tga", PIC_NOFLIP_TGA );
 
 	AddItem( background );
 	AddItem( title );
@@ -499,8 +523,12 @@ void CMenuConnectionProgress::_VidInit( void )
 	pos.x += uiStatic.xOffset;
 	pos.y += uiStatic.yOffset;
 
-	// title row: [cs logo 256x16 @(16,22)] "Loading..." (Java build 97)
-	title.SetRect( A7_PAD + 264, 16, A7_DLG_W - A7_PAD * 2 - 264, 28 );
+	// title row (Java titleRow): [gold soldier logo 18dp square @(16,17)]
+	// "Loading..." right of it at the 8dp margin; without the logo the
+	// caption sits flush at the inner pad instead of keeping a dead gap
+	if( logoPic )
+		title.SetRect( A7_TITLE_X, 16, A7_DLG_W - A7_TITLE_X - A7_PAD, 28 );
+	else title.SetRect( A7_PAD, 16, A7_DLG_W - A7_PAD * 2, 28 );
 
 	// gold caption rule (2dp tall, 6dp under the title) - drawn in Draw()
 	// where it lands between the rows
@@ -594,17 +622,20 @@ void CMenuConnectionProgress::Draw( void )
 		UI_FillRect( ruleX, ruleY, ruleW, ruleH, A7_LOADING_ACCENT );
 	}
 
-	// CS logo, left of the caption (Java titleRow logo 18dp, FIT_CENTER).
-	// Drawn ADDITIVE: the stock wordmark TGA is white-on-transparent and
-	// this engine upload flattens the alpha to black, so a normal draw
-	// stamps a black bar behind it - additive drops the black to nothing
-	// and keeps the white letters (GameUI draws it the same way)
+	// title-row logo: the ANDROID gold soldier (cs_logo.png), an 18dp
+	// SQUARE FIT_CENTER ImageView in the Java titleRow - the 256x331 art
+	// scales to A7_LOGO_IW x A7_LOGO_H inside the 26x26 box, centered.
+	// Drawn ADDITIVE: this engine upload flattens the PNG's transparent
+	// alpha to black, so a normal draw stamps a black box behind the
+	// soldier - additive drops that black to nothing (the transparent
+	// pixels are 0,0,0) and keeps the gold silhouette over the panel,
+	// the same trick the old wordmark draw used for its white letters
 	if( logoPic )
 	{
-		int lx = m_scPos.x + (int)( A7_PAD * uiStatic.scaleX );
-		int ly = m_scPos.y + (int)( 22 * uiStatic.scaleY );
-		int lw = (int)( 256 * uiStatic.scaleX );
-		int lh = (int)( 16 * uiStatic.scaleY );
+		int lx = m_scPos.x + (int)(( A7_LOGO_X + ( A7_LOGO_W - A7_LOGO_IW ) / 2 ) * uiStatic.scaleX );
+		int ly = m_scPos.y + (int)( A7_LOGO_Y * uiStatic.scaleY );
+		int lw = (int)( A7_LOGO_IW * uiStatic.scaleX );
+		int lh = (int)( A7_LOGO_H * uiStatic.scaleY );
 
 		EngFuncs::PIC_Set( logoPic, 255, 255, 255, 255 );
 		EngFuncs::PIC_DrawAdditive( lx, ly, lw, lh );
