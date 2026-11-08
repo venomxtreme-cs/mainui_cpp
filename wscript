@@ -59,8 +59,18 @@ def build(bld):
 		'font/*.cpp',
 		'menus/*.cpp',
 		'menus/dynamic/*.cpp',
+		# A7 build 144 (round 144 item 4): CS16 fork client pages - the
+		# CMake build globs menus/client/*.cpp too (this repo's
+		# ui_build_client_ok sources: BuyMenu/JoinClass/JoinGame/...), and
+		# without them the desktop menu link dies on UI_BuyMenu_Show,
+		# UI_JoinClass*_Show, UI_JoinGame_Show and friends
+		'menus/client/*.cpp',
 		'model/*.cpp',
-		'controls/*.cpp'
+		'controls/*.cpp',
+		# A7 build 144 (item 4): the Valve interface registration helper -
+		# the CMake build adds common/interface.cpp to the menu lib's
+		# sources explicitly (InterfaceReg::InterfaceReg dies otherwise)
+		'common/interface.cpp'
 	])
 
 	includes = [
@@ -70,6 +80,14 @@ def build(bld):
 		'controls/',
 		'menus/',
 		'model/',
+		# A7 build 144 (round 144 item 4): the wscript build (engine's
+		# desktop menu target) was missing two include roots the CMake
+		# path already had: public/ (BaseMenu.h's
+		# "cl_dll/IGameClientExports.h" lives at public/cl_dll/...) and
+		# common/ (that header then includes "interface.h", which lives at
+		# common/interface.h inside this tree)
+		'public',
+		'common',
 		'sdk_includes/common',
 		'sdk_includes/engine',
 		'sdk_includes/public',
