@@ -319,7 +319,11 @@ void CMenuXhair::_Init()
 
 		shape.SetNameAndStatus( L( "Shape" ), L( "Crosshair shape: cross, T, circle or dot" ) );
 		shape.Setup( &shapes );
-		shape.LinkCvar( "cl_crosshair_type" );
+		// A7 round 147 item 7: the list spin keeps the INDEX in the cvar
+		// (0 = cross, 1 = T, 2 = circle, 3 = dot - what the vector HUD
+		// reads), so link it as a value; the single-arg overload is the
+		// base class' private shortcut
+		shape.LinkCvar( "cl_crosshair_type", CMenuEditable::CVAR_VALUE );
 		shape.SetRect( x, y, 220, 32 );
 	}
 	y = 0;
