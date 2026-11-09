@@ -158,8 +158,10 @@ public:
 	// change [to the] id - steam id with correct logo ... in options"):
 	// the Steam account row under the crosshair column shows the stored
 	// SteamID64 (friends/steamid.txt, written by the SteamFriends web
-	// screen) plus the Steam avatar when one exists, and clicking it runs
-	// the engine's "steamfriends" command
+	// screen) plus the Steam avatar when one exists.
+	// A7 round 147 item 4: the row is STATUS-ONLY on PC and Android -
+	// clicking it starts nothing (no "steamfriends", no browser); the
+	// sign-in entry points live elsewhere (main menu, settings, launcher)
 	void UpdateSteam();
 	CMenuAction secSteam;
 	CMenuAction steamRow;
@@ -830,15 +832,14 @@ bool CMenuOptionsMPPage::Save()
 	return true;
 }
 
-// A7 build 136 (item 1, user: "when it is connected it should change to
-// the Steam id with correct logo ... in options"): open the Steam
-// sign-in/friends screen from the Options row. The engine registers the
-// command on Android only (engine/platform/android/android.c,
-// Cmd_AddCommand "steamfriends" -> XashActivity.openSteamFriends)
-static void SteamFriendsOpen( void )
-{
-	EngFuncs::ClientCmd( false, "steamfriends\n" );
-}
+// A7 round 147 item 4 (user: "no in options - multiplayer it has like try
+// to open browser - remove it for pc and android, just show connected"):
+// the old SteamFriendsOpen here ran "steamfriends" on row click, which on
+// Android jumped to the friends/sign-in screen and on PC was an unknown
+// command that LOOKED like a stuck browser open. The row is status-only
+// now on BOTH platforms - it reports connected / not signed in and starts
+// nothing. Sign-in entry points are untouched elsewhere (main menu Steam,
+// the Android settings screen, the PC launcher).
 
 // Fill the Steam account row from the two files the launcher-side
 // SteamFriends screen writes on sign-in: friends/steamid.txt (the id)
@@ -892,13 +893,14 @@ void CMenuOptionsMPPage::UpdateSteam()
 	{
 		// A7 build 142 (round 142 item 1, user: "don't show in options
 		// game , just only photo from steam and name changed"): the raw
-		// Steam ID64 no longer draws on this row - the only visual that
-		// stays here is the Steam photo (and the screen the row opens).
+		// Steam ID64 no longer draws on this row - only the Steam photo.
 		// The identity change he sees in-game is the persona name
 		// (UI_ApplySteamPersona pushes friends/name.txt into the name
 		// cvar), not a number; the id still lives on disk for every gate
-		// that needs it and shows on the Steam screen itself.
-		steamRow.SetText( "Steam connected - click to open" );
+		// that needs it.
+		// A7 round 147 item 4: status-only wording (no "click to open" -
+		// the row no longer starts anything on PC or Android)
+		steamRow.SetText( "Steam connected" );
 
 		Con_Printf( "[A7] build142: steam row connected (photo only, id hidden)\n" );
 
@@ -911,7 +913,7 @@ void CMenuOptionsMPPage::UpdateSteam()
 	}
 	else
 	{
-		steamRow.SetText( "Steam: not signed in - click to sign in with Steam" );
+		steamRow.SetText( "Steam: not signed in" );
 		Con_Printf( "[A7] build136: steam row not signed in\n" );
 
 		btnAvatarImport.Show();
@@ -1013,8 +1015,11 @@ void CMenuOptionsMPPage::_Init()
 	steamPic.SetRect( 16, 342, 56, 56 );
 
 	steamRow.SetRect( 84, 354, 400, 32 );
-	steamRow.szStatusText = "Open the Steam sign-in / friends screen";
-	steamRow.onReleased = SteamFriendsOpen;
+	// A7 round 147 item 4: status-only row - the old
+	// szStatusText "Open the Steam sign-in / friends screen" hint and the
+	// onReleased = SteamFriendsOpen click handler are gone (the function
+	// was deleted above); UpdateSteam() writes the connected / not-signed-
+	// in text instead
 	UpdateSteam();
 
 	// right column: crosshair appearance (picture's Multiplayer tab).
@@ -2406,6 +2411,44 @@ void CMenuOptionsVidModesModel::Update()
 
 		m_bFallback = true;
 		Con_Printf( "[A7] build143: video mode list empty - showing the synthesized resolution ladder\n" );
+	}
+
+	// A7 round 147 item 8 (user: "return + improve the Android screen-
+	// resolution picker on both platforms"): the RUNNING size must always
+	// have its own row - an Android panel size missing from the static
+	// ladder still gets listed first, and GetConfig can then highlight
+	// exactly what is on screen (it matches by width/height). Static
+	// buffer is safe: Update() rewrites it before the next refresh
+	static bool s_curRowLogged = false;
+	static char curRow[32];
+	int curW = (int)EngFuncs::GetCvarFloat( "width" );
+	int curH = (int)EngFuncs::GetCvarFloat( "height" );
+
+	if( curW >= 320 && curH >= 200 )
+	{
+		bool have = false;
+		int w, h;
+
+		for( int i = 0; i < m_szModes.Count(); i++ )
+		{
+			if( GetRowSize( i, w, h ) && w == curW && h == curH )
+			{
+				have = true;
+				break;
+			}
+		}
+
+		if( !have )
+		{
+			if( snprintf( curRow, sizeof( curRow ), "%ix%i", curW, curH ) > 0 )
+				m_szModes.InsertBefore( 0, curRow );
+
+			if( !s_curRowLogged )
+			{
+				s_curRowLogged = true;
+				Con_Printf( "[A7] build147: resolution picker carries current size %ix%i\n", curW, curH );
+			}
+		}
 	}
 }
 
@@ -3934,6 +3977,21 @@ bool CMenuOptions::SaveAll()
 	padPage.Save();
 	touchOptsPage.Save();
 	touchBtnsPage.Save();
+
+	// A7 round 147 item 3 (user: "Apply must save everything like ok,
+	// saved even if quitting" - Windows AND Android): WriteCvar above only
+	// moved values around in memory, so quitting after Apply could lose
+	// the whole page (Android never runs the shutdown writers when the
+	// app is swiped away). OK and Apply both funnel through here, so the
+	// moment either presses, every file lands on disk:
+	//   config.cfg  - bindings, archived cvars (name, video, all pages)
+	//                 and info vars, via the engine's host_writeconfig
+	//   opengl.cfg + video.cfg - renderer state (round-147 command
+	//                 host_writevidconfig; used to run only at shutdown)
+	//   touch.cfg   - the engine's own touch_writeconfig
+	EngFuncs::ClientCmd( true, "host_writeconfig\n" );
+	EngFuncs::ClientCmd( true, "host_writevidconfig\n" );
+	EngFuncs::ClientCmd( true, "touch_writeconfig\n" );
 
 	return ok;
 }

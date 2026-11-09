@@ -93,7 +93,10 @@ static UI_EXTENDED_FUNCTIONS gExtendedTable =
 	UI_ConnectionProgress_Precache,
 	UI_ConnectionProgress_Connect,
 	UI_ConnectionProgress_ChangeLevel,
-	UI_ConnectionProgress_ParseServerInfo
+	UI_ConnectionProgress_ParseServerInfo,
+	// A7 round 147 item 1b: per-frame phase feed (appended - engine
+	// NULL-guards it, so an older engine simply skips the feed)
+	UI_ConnectionProgress_StuffText
 };
 
 extern "C" EXPORT int GetExtAPI( int version, UI_EXTENDED_FUNCTIONS *pFunctionTable, ui_extendedfuncs_t *pEngfuncsFromEngine )

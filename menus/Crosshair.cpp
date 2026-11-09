@@ -93,6 +93,9 @@ private:
 	CMenuSlider size;
 	CMenuCheckBox xhairT;
 	CMenuSlider thick;
+	// A7 round 147 item 7: xash's cl_crosshair_type (cross / T / circle /
+	// dot) was console-only - expose it next to the other shape controls
+	CMenuSpinControl shape;
 
 	class CMenuCrosshairPreview : public CMenuBaseItem
 	{
@@ -305,6 +308,20 @@ void CMenuXhair::_Init()
 	xhairT.SetNameAndStatus( L( "T-Shape" ), NULL );
 	xhairT.LinkCvar( "xhair_t" );
 	xhairT.SetCoord( x, y );
+	y += 60;
+
+	// A7 round 147 item 7 (user: "advanced custom crosshair from xash"):
+	// the engine-side shape cvar the vector HUD reads every frame -
+	// 0 = classic cross, 1 = T, 2 = circle, 3 = dot
+	{
+		static const char *shapelist[] = { L( "Cross" ), L( "T shape" ), L( "Circle" ), L( "Dot" ) };
+		static CStringArrayModel shapes( shapelist, V_ARRAYSIZE( shapelist ) );
+
+		shape.SetNameAndStatus( L( "Shape" ), L( "Crosshair shape: cross, T, circle or dot" ) );
+		shape.Setup( &shapes );
+		shape.LinkCvar( "cl_crosshair_type" );
+		shape.SetRect( x, y, 220, 32 );
+	}
 	y = 0;
 	x += 292;
 
@@ -326,6 +343,7 @@ void CMenuXhair::_Init()
 	AddItem( dynamicScale );
 	AddItem( dot );
 	AddItem( xhairT );
+	AddItem( shape );
 	AddItem( gapUseWeaponValue );
 	AddItem( additive );
 
@@ -473,16 +491,45 @@ void CMenuXhair::CMenuCrosshairPreview::Draw()
 	int textHeight = m_scPos.y - ( m_scChSize * 1.5f );
 	UI_DrawString( font, m_scPos.x, textHeight, m_scSize.w, m_scChSize, szName, uiColorText, m_scChSize, QM_LEFT, ETF_SHADOW | ETF_NOSIZELIMIT | ETF_FORCECOL );
 
+	// A7 round 147 item 7: the vector HUD reads cl_crosshair_type every
+	// frame - show the SAME shape in the preview the player will get
+	int shape = (int)EngFuncs::GetCvarFloat( "cl_crosshair_type" );
+	if ( shape < 0 || shape > 3 )
+		shape = 0;
+
+	if ( shape == 2 )
+	{
+		/* circle: ring of small squares at the same radius the in-game
+		 * DrawCrosshairCircle uses (gap + length / 2); outline padding is
+		 * skipped here - the preview only approximates the ring */
+		float r = (float)( gap + length / 2 );
+		float half = (float)Q_max( 1, thickness ) * 0.5f;
+		const float pi = 3.14159265f;
+
+		for ( int i = 0; i < 16; i++ )
+		{
+			float a = 2.0f * pi * (float)i / 16.0f;
+			int px = center_x + (int)( cosf( a ) * r + 0.5f );
+			int py = center_y + (int)( sinf( a ) * r + 0.5f );
+
+			DrawCrosshairSection( px - (int)half, py - (int)half, px + (int)half + 1, py + (int)half + 1 );
+		}
+
+		if ( parent->dot.bChecked )
+			DrawCrosshairSection( x0, y0, x1, y1 );
+	}
+	else
+	{
 	/* draw padding if wanted */
 	if ( parent->pad.GetCurrentValue() )
 	{
 		/* don't scale this */
 		int pad = (int)parent->pad.GetCurrentValue();
 
-		if ( parent->dot.bChecked )
+		if ( parent->dot.bChecked || shape == 3 )
 			DrawCrosshairPadding( pad, x0, y0, x1, y1 );
 
-		if ( !parent->xhairT.bChecked )
+		if ( !parent->xhairT.bChecked && shape != 1 )
 			DrawCrosshairPadding( pad, x0, outer.top, x1, inner.top );
 
 		DrawCrosshairPadding( pad, x0, inner.bottom, x1, outer.bottom );
@@ -490,15 +537,16 @@ void CMenuXhair::CMenuCrosshairPreview::Draw()
 		DrawCrosshairPadding( pad, inner.right, y0, outer.right, y1 );
 	}
 
-	if ( parent->dot.bChecked )
+	if ( parent->dot.bChecked || shape == 3 )
 		DrawCrosshairSection( x0, y0, x1, y1 );
 
-	if ( !parent->xhairT.bChecked )
+	if ( !parent->xhairT.bChecked && shape != 1 )
 		DrawCrosshairSection( x0, outer.top, x1, inner.top );
 
 	DrawCrosshairSection( x0, inner.bottom, x1, outer.bottom );
 	DrawCrosshairSection( outer.left, y0, inner.left, y1 );
 	DrawCrosshairSection( inner.right, y0, outer.right, y1 );
+	}
 
 	// draw the rectangle
 	if ( eFocusAnimation == QM_HIGHLIGHTIFFOCUS && IsCurrentSelected() )
@@ -669,6 +717,8 @@ void CMenuXhair::Save()
 	size.WriteCvar();
 	xhairT.WriteCvar();
 	thick.WriteCvar();
+	// A7 round 147 item 7: persist the shape spin with the rest
+	shape.WriteCvar();
 }
 
 ADD_MENU( menu_crosshair, CMenuCrosshair, UI_Crosshair_Menu );

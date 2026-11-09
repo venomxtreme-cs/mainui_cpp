@@ -217,7 +217,13 @@ public:
 	{
 		SetCommonText( pszText );
 		loadBar.SetValue( flProgress );
-		m_iState = STATE_CONNECTING;
+		// A7 round 147 item 1b: m_iState is NOT touched here any more.
+		// The engine now calls this EVERY FRAME (Android loadingStatus
+		// cadence), and stomping the state live would collapse a running
+		// transfer block (STATE_DOWNLOAD) or flip the show-path's STATE_MENU
+		// mid-load. State stays the property of Connect/Download/DownloadEnd/
+		// Precache, exactly like before - this only moves the status line
+		// and the main bar, like the Java window's per-frame setText.
 	}
 	void HandleDownload( const char *pszFileName, const char *pszServerName, int iCurrent, int iTotal, const char *comment );
 	void HandleConnect( const char *pszText );
@@ -770,6 +776,26 @@ void UI_ConnectionProgress_ParseServerInfo( const char *server )
 	menu_connectionprogress->SetCommonText( "Parsing server info..." );
 	menu_connectionprogress->m_iState = STATE_CONNECTING;
 	menu_connectionprogress->EnsureShown();
+}
+
+// A7 round 147 item 1b (user: "PC connect/dialog texts not same like
+// android"): the engine's per-frame load-phase feed - the SAME sentences
+// Android's loadingStatus writes into the Java window (cl_main
+// CL_LoadingPhaseText), pushed at the same cadence with the same combined
+// percent. Like Android_LoadingStatus this lands ONLY while the window is
+// up (a browsing menu never collects phase updates), and the Android
+// suppression guard keeps it dead where the Java overlay owns the view.
+void UI_ConnectionProgress_StuffText( float flProgress, const char *pszText )
+{
+	A7_CONN_DIALOG_OFF( );
+
+	if( !pszText || !pszText[0] )
+		return;
+
+	if( !menu_connectionprogress->IsVisible( ))
+		return;
+
+	menu_connectionprogress->HandleStufftext( flProgress, pszText );
 }
 
 void UI_ConnectionProgress_f( void )
