@@ -116,6 +116,15 @@ public:
 		int stripeCount;
 		bool colorable;
 		const bool *horizontal;
+		// A7 build 148 (round 135 item 10): same per-instance avatar-gen
+		// watch as the Options page (Configuration.cpp class comment) -
+		// this dialog also holds TWO previews of this type and the
+		// build-111 function-local static was shared by them: logoImage
+		// (AddItem-ed first = drawn first) consumed every @cl_avatargen
+		// bump and reloaded the AVATAR path into the spraypaint box while
+		// avatarImage never refreshed live. Only the avatar box watches.
+		bool watchAvatarGen;
+		int avGenSeen;
 	} logoImage;
 
 	CMenuSpinControl	logo;
@@ -149,10 +158,11 @@ void CMenuPlayerSetup::CMenuLogoPreview::Draw()
 	// screen is re-opened ("put any logo ... make it update in options").
 	// The cached texture was already freed engine-side, so the reload
 	// below reads the new bytes from disk.
-	static int avGenSeen = -1;
+	// A7 build 148 (round 135 item 10): per-instance watch (see the class
+	// comment) - the spraypaint box no longer eats the avatar box's bump.
 	int avGen = (int)EngFuncs::GetCvarFloat( "@cl_avatargen" );
 
-	if( avGen != avGenSeen )
+	if( watchAvatarGen && avGen != avGenSeen )
 	{
 		avGenSeen = avGen;
 
@@ -646,6 +656,9 @@ void CMenuPlayerSetup::_Init( void )
 	logoImage.stripeCount = m_stripeCount;
 	logoImage.horizontal = &m_horizontal;
 	logoImage.colorable = false;
+	// A7 build 148 (round 135 item 10): per-instance avatar-gen watch
+	logoImage.watchAvatarGen = false;
+	logoImage.avGenSeen = -1;
 
 	// disable playermodel preview for HLRally to prevent crash
 	if( !stricmp( gMenu.m_gameinfo.gamefolder, "hlrally" ))
@@ -796,6 +809,10 @@ void CMenuPlayerSetup::_Init( void )
 		avatarImage.horizontal = NULL;
 		avatarImage.szName = "";
 		avatarImage.SetRect( 460, btnAvatarImport.pos.y - 6, 44, 44 );
+		// A7 build 148 (round 135 item 10): the avatar box is the one
+		// that tracks @cl_avatargen (see the class comment)
+		avatarImage.watchAvatarGen = true;
+		avatarImage.avGenSeen = -1;
 
 		// refresh unconditionally so a stored/imported picture shows on
 		// first open

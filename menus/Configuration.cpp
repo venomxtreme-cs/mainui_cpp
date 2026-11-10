@@ -111,6 +111,9 @@ public:
 		logoImage.stripeCount = m_stripeCount;
 		logoImage.colorable = false;
 		logoImage.horizontal = &m_horizontal;
+		// A7 build 148 (round 135 item 10): per-instance avatar-gen watch
+		logoImage.watchAvatarGen = false;
+		logoImage.avGenSeen = -1;
 
 		// A7 round 100 (user: "no choosing - just import image or connect
 		// from steam"): the scoreboard logo is RESOLVED by the game now
@@ -122,6 +125,8 @@ public:
 		avatarImage.stripeCount = 0;
 		avatarImage.colorable = false;
 		avatarImage.horizontal = NULL;
+		avatarImage.watchAvatarGen = true;
+		avatarImage.avGenSeen = -1;
 
 		preview.hImage = 0;
 		preview.hWhite = 0;
@@ -211,6 +216,19 @@ private:
 		int stripeCount;
 		bool colorable;
 		const bool *horizontal;
+		// A7 build 148 (round 135 item 10, "the Options logo still does
+		// not regenerate"): the @cl_avatargen watch is PER-INSTANCE and
+		// only the avatar box runs it. The build-113 code kept it in a
+		// function-local static shared by BOTH previews on this page: the
+		// spraypaint box (logoImage is AddItem-ed first = drawn first by
+		// FOR_EACH_VEC) consumed every bump - it reloaded the AVATAR path
+		// into the spraypaint box (wrong picture; the PIC_Free also
+		// released the texture avatarImage still held) while avatarImage,
+		// the box next to "Import image...", never got a live refresh at
+		// all: exactly the reported symptom. The spraypaint picture is
+		// owned by UpdateLogo()/the spin and has no avatar-gen dependency.
+		bool watchAvatarGen;
+		int avGenSeen;
 	} logoImage;
 	CMenuPicButton btnChooseColor;
 	CMenuColorPickerDialog colorPickerDlg;
@@ -286,10 +304,13 @@ void CMenuOptionsMPPage::CMenuLogoPreview::Draw()
 	// (Options -> Import image...) kept its stale texture until the page
 	// was re-entered. Same live refresh as PlayerSetup: on every engine
 	// bump drop the cached picture and re-read the new bytes from disk.
-	static int avGenSeen = -1;
+	// A7 build 148 (round 135 item 10): the watch is now per-instance
+	// (watchAvatarGen/avGenSeen members, see the class comment) - the
+	// spraypaint box no longer eats the avatar box's refresh, and the
+	// proof line below names the frame the avatar box regenerated on.
 	int avGen = (int)EngFuncs::GetCvarFloat( "@cl_avatargen" );
 
-	if( avGen != avGenSeen )
+	if( watchAvatarGen && avGen != avGenSeen )
 	{
 		avGenSeen = avGen;
 
@@ -299,6 +320,8 @@ void CMenuOptionsMPPage::CMenuLogoPreview::Draw()
 		{
 			EngFuncs::PIC_Free( path );
 			hImage = EngFuncs::PIC_Load( path, 0 );
+			Con_Printf( "[A7] build148: options avatar preview regenerated (gen %d, %s)\n",
+				avGen, path );
 		}
 	}
 
