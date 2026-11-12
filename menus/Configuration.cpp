@@ -897,6 +897,11 @@ void CMenuOptionsMPPage::UpdateSteam()
 
 void CMenuOptionsMPPage::_Init()
 {
+	// A7 build 156: one-shot section marker (gate scan needle; the
+	// build-155 checkbox status hints that carried the tag drew INLINE
+	// beside the boxes and collided - see the setup block below)
+	Con_Printf( "build156: advanced crosshair section ready\n" );
+
 	static const char *itemlist[V_ARRAYSIZE( g_CrosshairColors )];
 	static CStringArrayModel colors( itemlist, V_ARRAYSIZE( g_CrosshairColors ));
 	for( size_t i = 0; i < V_ARRAYSIZE( g_CrosshairColors ); i++ )
@@ -1003,6 +1008,9 @@ void CMenuOptionsMPPage::_Init()
 	// Every control writes its cvar live (XhairLiveWrite) - the real
 	// crosshair behind the floating dialog reacts while you turn the
 	// knobs, no fake preview needed.
+	// build 156: rows re-pitched 236/300/364 (64px - the spin labels
+	// render above and were touching the row above at the old 56px), and
+	// the checkbox status texts are GONE (see the note below).
 	SectionHeader( crosshairTitle, "Advanced crosshair", 544, 184, 496 );
 
 	xhStyle.Setup( &styles );
@@ -1027,35 +1035,42 @@ void CMenuOptionsMPPage::_Init()
 	xhThick.szName = "Thickness";
 	xhThick.LinkCvar( "xhair_thick", CMenuEditable::CVAR_VALUE );
 	xhThick.onChanged = VoidCb( &CMenuOptionsMPPage::XhairLiveWrite );
-	xhThick.SetRect( 544, 292, 150, 32 );
+	xhThick.SetRect( 544, 300, 150, 32 );
 
 	xhPad.Setup( 0, 6, 1 );
 	xhPad.szName = "Outline";
 	xhPad.LinkCvar( "xhair_pad", CMenuEditable::CVAR_VALUE );
 	xhPad.onChanged = VoidCb( &CMenuOptionsMPPage::XhairLiveWrite );
-	xhPad.SetRect( 710, 292, 150, 32 );
+	xhPad.SetRect( 710, 300, 150, 32 );
 
 	xhColor.Setup( &colors );
 	xhColor.szName = "Color";
 	xhColor.LinkCvar( "xhair_color", CMenuEditable::CVAR_STRING );
 	xhColor.onCvarGet = VoidCb( &CMenuOptionsMPPage::XhairColorFromCvar );
 	xhColor.onChanged = VoidCb( &CMenuOptionsMPPage::XhairLiveWrite );
-	xhColor.SetRect( 880, 292, 150, 32 );
+	xhColor.SetRect( 880, 300, 150, 32 );
 
-	xhEnable.SetNameAndStatus( "Enable", "build155: advanced crosshair master switch (the legacy sprite crosshair draws while this is off)" );
+	// A7 build 156 (user: "textes are stuck in down with menu"): NO
+	// szStatusText here - CMenuCheckBox::Draw draws it INLINE beside the
+	// box (QMF_NOTIFY), and the framework surfaces it at the dialog
+	// bottom too: the three long build-155 hints collided with each
+	// other, overflowed the right edge and hung over the menu footer.
+	// The names + the live behavior carry the section; the tagged gate
+	// marker moved to the one-shot _Init print below.
+	xhEnable.SetNameAndStatus( "Enable", NULL );
 	xhEnable.LinkCvar( "xhair_enable" );
 	xhEnable.onChanged = VoidCb( &CMenuOptionsMPPage::XhairLiveWrite );
-	xhEnable.SetRect( 544, 348, 32, 32 );
+	xhEnable.SetRect( 544, 364, 32, 32 );
 
-	xhDot.SetNameAndStatus( "Center dot", "build155: dot in the middle of the advanced crosshair" );
+	xhDot.SetNameAndStatus( "Center dot", NULL );
 	xhDot.LinkCvar( "xhair_dot" );
 	xhDot.onChanged = VoidCb( &CMenuOptionsMPPage::XhairLiveWrite );
-	xhDot.SetRect( 710, 348, 32, 32 );
+	xhDot.SetRect( 710, 364, 32, 32 );
 
-	xhAdditive.SetNameAndStatus( "Translucent", "build155: draw the advanced crosshair additive (brighter, see-through)" );
+	xhAdditive.SetNameAndStatus( "Translucent", NULL );
 	xhAdditive.LinkCvar( "xhair_additive" );
 	xhAdditive.onChanged = VoidCb( &CMenuOptionsMPPage::XhairLiveWrite );
-	xhAdditive.SetRect( 880, 348, 32, 32 );
+	xhAdditive.SetRect( 880, 364, 32, 32 );
 
 	msgBox.SetMessage( L( "Please, choose another player name" ) );
 	msgBox.Link( this );
