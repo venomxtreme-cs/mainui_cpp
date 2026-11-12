@@ -21,8 +21,12 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 // floating window with the tab strip Multiplayer | Keyboard | Mouse | Audio
 // | Video and OK / Cancel / Apply on the bottom right. The Multiplayer tab
 // carries the picture's content: player name, spraypaint image (logo
-// dropdown + preview + colour) and crosshair appearance (size/colour/
-// translucent + live preview).
+// dropdown + preview + colour) and the advanced crosshair (build 155:
+// the legacy sprite knobs - cl_crosshair_size/color/translucent - left
+// the menu; the xhair_* system the HUD already ships gets the section
+// instead: style/size/gap/thickness/outline/colour + enable/dot/
+// translucent, every control writing its cvar live while the dialog is
+// open).
 // build 58: Touch tab removed on user request (touch settings stay reachable
 // from the touch menus / console); every page is organized into labelled
 // sections like the original GameUI grouped options, and the Video tab is
@@ -66,7 +70,7 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 // its own strip and the outer one from the page height
 #define TAB_STRIP_HEIGHT ( UI_MED_CHAR_HEIGHT * 3 / 2 )
 
-static const char *g_szCrosshairSizes[] = { "auto", "small", "medium", "large" };
+static const char *g_szCrosshairStyles[] = { "Cross", "T-shape", "Circle", "Dot" };
 
 // A7 build 58, build 87: section header - a white label that groups a
 // page's controls like the original GameUI's organised option sections
@@ -95,7 +99,7 @@ static struct
 
 /*
 =====================================================================
-Multiplayer tab: player name, spraypaint image, crosshair appearance
+Multiplayer tab: player name, spraypaint image, advanced crosshair
 =====================================================================
 */
 class CMenuOptionsMPPage : public CMenuItemsHolder
@@ -127,9 +131,6 @@ public:
 		avatarImage.horizontal = NULL;
 		avatarImage.watchAvatarGen = true;
 		avatarImage.avGenSeen = -1;
-
-		preview.hImage = 0;
-		preview.hWhite = 0;
 	}
 
 	// returns false when the player name is invalid (msgbox shown)
@@ -140,11 +141,17 @@ public:
 	// (the field masks input with '*' while bHideInput is set)
 	void OnShowPasswordToggle();
 
-	// A7 build 143 (round 143 item 3): crosshair size - map the raw cvar
-	// string back onto the localized spin model, and write it live when
-	// the spin moves (the HUD re-reads the cvar every frame)
-	void SizeFromCvar();
-	void SizeChanged();
+	// A7 build 155 (user: "in options remove crosshair appearance, change
+	// it to advance crosshair which it already have"): the advanced
+	// crosshair section. XhairColorFromCvar maps the "R G B [A]" cvar back
+	// onto the palette rows for the read-back; XhairColorWrite pushes the
+	// spin selection back as "R G B <A>" (alpha is not in the picker, the
+	// cvar keeps whatever it carries); XhairLiveWrite writes EVERY control
+	// the moment one changes, so the real crosshair behind the floating
+	// dialog reacts while you turn the knobs
+	void XhairColorFromCvar();
+	void XhairColorWrite();
+	void XhairLiveWrite();
 
 	// A7 round 100: no picker - show the picture the scoreboard will pick
 	// by itself, and offer the one action that adds a new one
@@ -245,16 +252,19 @@ private:
 	CMenuLogoPreview avatarImage;
 	CMenuAction secAvatar;
 
-	CMenuSpinControl size;
-	CMenuSpinControl color;
-	CMenuCheckBox translucent;
-	class CMenuXhairPreview : public CMenuBaseItem
-	{
-	public:
-		void Draw() override;
-		HIMAGE hImage;
-		HIMAGE hWhite;
-	} preview;
+	// A7 build 155: the advanced crosshair section (see the methods
+	// above). Spin labels render ABOVE the control (SpinControl::Draw),
+	// checkbox labels overflow to the right of the 32px box
+	// (CheckBox.cpp) - that is what the 3-column layout below leans on
+	CMenuSpinControl xhStyle;   // cl_crosshair_type: cross / T / circle / dot
+	CMenuSpinControl xhSize;    // xhair_size
+	CMenuSpinControl xhGap;     // xhair_gap
+	CMenuSpinControl xhThick;   // xhair_thick
+	CMenuSpinControl xhPad;     // xhair_pad (outline)
+	CMenuSpinControl xhColor;   // xhair_color "R G B [A]"
+	CMenuCheckBox xhEnable;     // xhair_enable
+	CMenuCheckBox xhDot;        // xhair_dot
+	CMenuCheckBox xhAdditive;   // xhair_additive
 
 	CMenuAction sprayNote1;
 	CMenuAction crosshairTitle;
@@ -383,102 +393,6 @@ void CMenuOptionsMPPage::CMenuLogoPreview::Draw()
 
 	// draw the rectangle
 	if( eFocusAnimation == QM_HIGHLIGHTIFFOCUS && IsCurrentSelected() )
-		UI_DrawRectangle( m_scPos, m_scSize, uiInputTextColor );
-	else
-		UI_DrawRectangle( m_scPos, m_scSize, uiInputFgColor );
-}
-
-void CMenuOptionsMPPage::CMenuXhairPreview::Draw()
-{
-	CMenuOptionsMPPage *parent = (CMenuOptionsMPPage *)Parent();
-
-	int length;
-	int x = m_scPos.x, y = m_scPos.y;
-	int w = m_scSize.w, h = m_scSize.h;
-	int delta;
-	int i = parent->color.GetCurrentValue();
-	int r = 0, g = 255, b = 0, a = 180;
-
-	if ( i >= 0 && i < (int)V_ARRAYSIZE( g_CrosshairColors ) )
-	{
-		r = g_CrosshairColors[i].r;
-		g = g_CrosshairColors[i].g;
-		b = g_CrosshairColors[i].b;
-	}
-	else
-	{
-		sscanf( EngFuncs::GetCvarString( "cl_crosshair_color" ), "%d %d %d", &r, &g, &b );
-	}
-
-	if ( !hImage )
-	{
-		UI_FillRect( m_scPos, m_scSize, uiPromptBgColor );
-	}
-	else
-	{
-		EngFuncs::PIC_Set( hImage, 255, 255, 255 );
-		EngFuncs::PIC_DrawTrans( m_scPos, m_scSize );
-	}
-
-	switch ( (int)parent->size.GetCurrentValue() )
-	{
-	case 1:
-		length = 10;
-		break;
-	case 2:
-		length = 20;
-		break;
-	case 3:
-		length = 30;
-		break;
-	case 0:
-		if ( ScreenWidth < 640 )
-			length = 30;
-		else if ( ScreenWidth < 1024 )
-			length = 20;
-		else
-			length = 10;
-	default:
-		break;
-	}
-
-	length *= ScreenHeight / 768.0f;
-	delta = ( w / 2 - length ) * 0.5f;
-
-	if ( !parent->translucent.bChecked )
-	{
-		EngFuncs::PIC_Set( hWhite, r, g, b, a );
-		EngFuncs::PIC_DrawTrans( x + w / 2, y + delta, 1, length );
-
-		EngFuncs::PIC_Set( hWhite, r, g, b, a );
-		EngFuncs::PIC_DrawTrans( x + w / 2, y + h / 2 + delta, 1, length );
-
-		EngFuncs::PIC_Set( hWhite, r, g, b, a );
-		EngFuncs::PIC_DrawTrans( x + delta, y + h / 2, length, 1 );
-
-		EngFuncs::PIC_Set( hWhite, r, g, b, a );
-		EngFuncs::PIC_DrawTrans( x + w / 2 + delta, y + h / 2, length, 1 );
-	}
-	else
-	{
-		EngFuncs::PIC_Set( hWhite, r, g, b, a );
-		EngFuncs::PIC_DrawAdditive( x + w / 2, y + delta, 1, length );
-
-		EngFuncs::PIC_Set( hWhite, r, g, b, a );
-		EngFuncs::PIC_DrawAdditive( x + w / 2, y + h / 2 + delta, 1, length );
-
-		EngFuncs::PIC_Set( hWhite, r, g, b, a );
-		EngFuncs::PIC_DrawAdditive( x + delta, y + h / 2, length, 1 );
-
-		EngFuncs::PIC_Set( hWhite, r, g, b, a );
-		EngFuncs::PIC_DrawAdditive( x + w / 2 + delta, y + h / 2, length, 1 );
-	}
-
-	int textHeight = m_scPos.y - ( m_scChSize * 1.5f );
-	UI_DrawString( font, m_scPos.x, textHeight, m_scSize.w, m_scChSize, szName, uiColorText, m_scChSize, QM_LEFT, ETF_SHADOW | ETF_NOSIZELIMIT | ETF_FORCECOL );
-
-	// draw the rectangle
-	if ( eFocusAnimation == QM_HIGHLIGHTIFFOCUS && IsCurrentSelected() )
 		UI_DrawRectangle( m_scPos, m_scSize, uiInputTextColor );
 	else
 		UI_DrawRectangle( m_scPos, m_scSize, uiInputFgColor );
@@ -774,37 +688,80 @@ void CMenuOptionsMPPage::WriteNewLogo( void )
 	EngFuncs::CvarSetValue( "@cl_logoupdate", !EngFuncs::GetCvarFloat( "@cl_logoupdate" ));
 }
 
-// A7 build 143 (round 143 item 3): the size spin's model holds the
-// LOCALIZED labels (GameUI_Auto...) while cl_crosshair_size holds raw
-// "auto|small|medium|large". Map the cvar string back to its label so
-// the base read-back (UpdateEditable -> SetCurrentValue(string)) lands
-// on the right entry; unknown values fall back to Auto.
-void CMenuOptionsMPPage::SizeFromCvar()
+// A7 build 155: the colour spin's model holds the LOCALIZED palette
+// labels while xhair_color is "R G B [A]" - map the cvar back onto the
+// NEAREST palette entry so the base read-back
+// (UpdateEditable -> SetCurrentValue(string)) lands on a real row
+void CMenuOptionsMPPage::XhairColorFromCvar()
 {
-	static const char *keys[] = { "GameUI_Auto", "GameUI_Small", "GameUI_Medium", "GameUI_Large" };
-	const char *str = EngFuncs::GetCvarString( "cl_crosshair_size" );
-	int i;
+	int r = -1, g = 0, b = 0;
+	int i, best = 0;
+	long bestd = -1;
 
-	for( i = 0; i < (int)V_ARRAYSIZE( g_szCrosshairSizes ); i++ )
+	sscanf( EngFuncs::GetCvarString( "xhair_color" ), "%d %d %d", &r, &g, &b );
+
+	if( r < 0 )
+		return; // unparsable - keep the default row
+
+	for( i = 0; i < (int)V_ARRAYSIZE( g_CrosshairColors ); i++ )
 	{
-		if( !stricmp( str, g_szCrosshairSizes[i] ))
-			break;
+		int dr = g_CrosshairColors[i].r - r;
+		int dg = g_CrosshairColors[i].g - g;
+		int db = g_CrosshairColors[i].b - b;
+		long d = (long)dr * dr + (long)dg * dg + (long)db * db;
+
+		if( bestd < 0 || d < bestd )
+		{
+			bestd = d;
+			best = i;
+		}
 	}
 
-	if( i == (int)V_ARRAYSIZE( g_szCrosshairSizes ))
-		i = 0;
-
-	size.SetCvarString( L( keys[i] ));
+	xhColor.SetCvarString( L( g_CrosshairColors[best].name ));
 }
 
-// fired by the spin on every value change (QM_CHANGED) - write the RAW
-// entry the HUD parses, so the crosshair size moves at spin time
-void CMenuOptionsMPPage::SizeChanged()
+// build 155: write the colour spin's selection back as "R G B <A>" - the
+// 4th component (alpha) is not in the picker, so the cvar keeps whatever
+// alpha it already carries (console users can still set it)
+void CMenuOptionsMPPage::XhairColorWrite()
 {
-	int i = (int)size.GetCurrentValue();
+	char colorstr[32];
+	int r, g, b, a = 255;
+	int i = xhColor.GetCurrentValue();
 
-	if( i >= 0 && i < (int)V_ARRAYSIZE( g_szCrosshairSizes ))
-		EngFuncs::CvarSetString( "cl_crosshair_size", g_szCrosshairSizes[i] );
+	if( i >= 0 && i < (int)V_ARRAYSIZE( g_CrosshairColors ))
+	{
+		r = g_CrosshairColors[i].r;
+		g = g_CrosshairColors[i].g;
+		b = g_CrosshairColors[i].b;
+	}
+	else
+	{
+		// unparsable spin state - rewrite what the cvar already says
+		sscanf( EngFuncs::GetCvarString( "xhair_color" ), "%d %d %d", &r, &g, &b );
+	}
+
+	sscanf( EngFuncs::GetCvarString( "xhair_color" ), "%*d %*d %*d %d", &a );
+	a = bound( 0, a, 255 );
+
+	snprintf( colorstr, sizeof( colorstr ), "%d %d %d %d", r, g, b, a );
+	EngFuncs::CvarSetString( "xhair_color", colorstr );
+}
+
+// build 155: fired by every advanced-crosshair control on change - write
+// them ALL so the real crosshair (the HUD re-reads the cvars every frame)
+// reacts live while the dialog is open
+void CMenuOptionsMPPage::XhairLiveWrite()
+{
+	xhStyle.WriteCvar();
+	xhSize.WriteCvar();
+	xhGap.WriteCvar();
+	xhThick.WriteCvar();
+	xhPad.WriteCvar();
+	xhEnable.WriteCvar();
+	xhDot.WriteCvar();
+	xhAdditive.WriteCvar();
+	XhairColorWrite();
 }
 
 // A7 build 143 (round 143 item 5): the Show checkbox unmasks the
@@ -817,8 +774,6 @@ void CMenuOptionsMPPage::OnShowPasswordToggle()
 
 bool CMenuOptionsMPPage::Save()
 {
-	char colorstr[32];
-
 	if( !UI::Names::CheckIsNameValid( name.GetBuffer() ))
 	{
 		msgBox.Show();
@@ -838,19 +793,9 @@ bool CMenuOptionsMPPage::Save()
 	// persists it with the rest of config.cfg
 	EnsurePlayerLogo();
 
-	int i = size.GetCurrentValue();
-	if( i >= 0 && i < (int)V_ARRAYSIZE( g_szCrosshairSizes ))
-		EngFuncs::CvarSetString( "cl_crosshair_size", g_szCrosshairSizes[i] );
-
-	i = color.GetCurrentValue();
-	if( i >= 0 && i < (int)V_ARRAYSIZE( g_CrosshairColors ))
-	{
-		snprintf( colorstr, sizeof( colorstr ), "%i %i %i",
-			g_CrosshairColors[i].r, g_CrosshairColors[i].g, g_CrosshairColors[i].b );
-		EngFuncs::CvarSetString( "cl_crosshair_color", colorstr );
-	}
-
-	translucent.WriteCvar();
+	// A7 build 155: the advanced crosshair section - WriteCvar pushes the
+	// linked cvars; the colour string gets the manual write (alpha kept)
+	XhairLiveWrite();
 
 	return true;
 }
@@ -957,8 +902,10 @@ void CMenuOptionsMPPage::_Init()
 	for( size_t i = 0; i < V_ARRAYSIZE( g_CrosshairColors ); i++ )
 		itemlist[i] = L( g_CrosshairColors[i].name );
 
-	static const char *sizelist[] = { L( "GameUI_Auto" ), L( "GameUI_Small" ), L( "GameUI_Medium" ), L( "GameUI_Large" ) };
-	static CStringArrayModel sizes( sizelist, V_ARRAYSIZE( sizelist ));
+	// A7 build 155: the advanced-crosshair style rows (cl_crosshair_type
+	// 0..3, the HUD clamps out-of-range back to Cross)
+	static const char *stylelist[] = { "Cross", "T-shape", "Circle", "Dot" };
+	static CStringArrayModel styles( stylelist, V_ARRAYSIZE( stylelist ));
 
 	// A7 build 88: name area shrunk per user ("name are too big") - the
 	// spray and player-logo previews grow 56 -> 88 (small, like the
@@ -1045,39 +992,70 @@ void CMenuOptionsMPPage::_Init()
 	// in text instead
 	UpdateSteam();
 
-	// right column: crosshair appearance (picture's Multiplayer tab).
-	// A7 build 87: re-pitched so every label clears the control above it
-	// (header 16..40, size label 52..78, color label 135..161)
-	// build 90: opened up again - 17/19/16px gaps between the rows
-	SectionHeader( crosshairTitle, "Crosshair appearance", 544, 184, 320 );
+	// right column: A7 build 155 (user: "in options remove crosshair
+	// appearance, change it to advance crosshair which it already have")
+	// - the legacy sprite knobs (cl_crosshair_size/color/translucent)
+	// leave the menu; the ADVANCED crosshair the HUD already ships
+	// (xhair_* cvars + cl_crosshair_type, cl_dll/ammo.cpp) gets the
+	// section. 3 columns x 2 spin rows + a checkbox row fit the 401px
+	// page: spin labels render ABOVE the control (SpinControl::Draw),
+	// checkbox labels overflow right of the 32px box (CheckBox.cpp).
+	// Every control writes its cvar live (XhairLiveWrite) - the real
+	// crosshair behind the floating dialog reacts while you turn the
+	// knobs, no fake preview needed.
+	SectionHeader( crosshairTitle, "Advanced crosshair", 544, 184, 496 );
 
-	size.Setup( &sizes );
-	size.szName = "Size";
-	// A7 build 143 (round 143 item 3, user: "crosshair size in options,
-	// sometime it didn't move"): the old CVAR_VALUE link read the cvar as
-	// a FLOAT - "medium" parsed to 0, the spin always showed Auto, and
-	// Save then REVERTED the real choice back to auto. String link with a
-	// label mapping (the model text is localized, the cvar is raw) plus a
-	// live write on change so the crosshair moves while spinning
-	size.LinkCvar( "cl_crosshair_size", CMenuEditable::CVAR_STRING );
-	size.onCvarGet = VoidCb( &CMenuOptionsMPPage::SizeFromCvar );
-	size.onChanged = VoidCb( &CMenuOptionsMPPage::SizeChanged );
-	size.SetRect( 544, 264, 200, 32 );
+	xhStyle.Setup( &styles );
+	xhStyle.szName = "Style";
+	xhStyle.LinkCvar( "cl_crosshair_type", CMenuEditable::CVAR_VALUE );
+	xhStyle.onChanged = VoidCb( &CMenuOptionsMPPage::XhairLiveWrite );
+	xhStyle.SetRect( 544, 236, 150, 32 );
 
-	color.Setup( &colors );
-	color.szName = "Color";
-	color.LinkCvar( "cl_crosshair_color", CMenuEditable::CVAR_STRING );
-	color.SetRect( 544, 354, 200, 32 );
+	xhSize.Setup( 1, 20, 1 );
+	xhSize.szName = "Size";
+	xhSize.LinkCvar( "xhair_size", CMenuEditable::CVAR_VALUE );
+	xhSize.onChanged = VoidCb( &CMenuOptionsMPPage::XhairLiveWrite );
+	xhSize.SetRect( 710, 236, 150, 32 );
 
-	// explicit box: without a width the label lands on the box itself
-	translucent.SetNameAndStatus( L( "GameUI_Translucent" ), NULL );
-	translucent.LinkCvar( "cl_crosshair_translucent" );
-	translucent.SetRect( 760, 354, 32, 32 );
+	xhGap.Setup( 0, 15, 1 );
+	xhGap.szName = "Gap";
+	xhGap.LinkCvar( "xhair_gap", CMenuEditable::CVAR_VALUE );
+	xhGap.onChanged = VoidCb( &CMenuOptionsMPPage::XhairLiveWrite );
+	xhGap.SetRect( 880, 236, 150, 32 );
 
-	preview.szName = ""; // title is the crosshairTitle label now
-	preview.SetRect( 880, 184, 160, 160 );
-	preview.hImage = EngFuncs::PIC_Load( "gfx/vgui/crosshair.tga", 0 );
-	preview.hWhite = EngFuncs::PIC_Load( "*white" );
+	xhThick.Setup( 1, 8, 1 );
+	xhThick.szName = "Thickness";
+	xhThick.LinkCvar( "xhair_thick", CMenuEditable::CVAR_VALUE );
+	xhThick.onChanged = VoidCb( &CMenuOptionsMPPage::XhairLiveWrite );
+	xhThick.SetRect( 544, 292, 150, 32 );
+
+	xhPad.Setup( 0, 6, 1 );
+	xhPad.szName = "Outline";
+	xhPad.LinkCvar( "xhair_pad", CMenuEditable::CVAR_VALUE );
+	xhPad.onChanged = VoidCb( &CMenuOptionsMPPage::XhairLiveWrite );
+	xhPad.SetRect( 710, 292, 150, 32 );
+
+	xhColor.Setup( &colors );
+	xhColor.szName = "Color";
+	xhColor.LinkCvar( "xhair_color", CMenuEditable::CVAR_STRING );
+	xhColor.onCvarGet = VoidCb( &CMenuOptionsMPPage::XhairColorFromCvar );
+	xhColor.onChanged = VoidCb( &CMenuOptionsMPPage::XhairLiveWrite );
+	xhColor.SetRect( 880, 292, 150, 32 );
+
+	xhEnable.SetNameAndStatus( "Enable", "build155: advanced crosshair master switch (the legacy sprite crosshair draws while this is off)" );
+	xhEnable.LinkCvar( "xhair_enable" );
+	xhEnable.onChanged = VoidCb( &CMenuOptionsMPPage::XhairLiveWrite );
+	xhEnable.SetRect( 544, 348, 32, 32 );
+
+	xhDot.SetNameAndStatus( "Center dot", "build155: dot in the middle of the advanced crosshair" );
+	xhDot.LinkCvar( "xhair_dot" );
+	xhDot.onChanged = VoidCb( &CMenuOptionsMPPage::XhairLiveWrite );
+	xhDot.SetRect( 710, 348, 32, 32 );
+
+	xhAdditive.SetNameAndStatus( "Translucent", "build155: draw the advanced crosshair additive (brighter, see-through)" );
+	xhAdditive.LinkCvar( "xhair_additive" );
+	xhAdditive.onChanged = VoidCb( &CMenuOptionsMPPage::XhairLiveWrite );
+	xhAdditive.SetRect( 880, 348, 32, 32 );
 
 	msgBox.SetMessage( L( "Please, choose another player name" ) );
 	msgBox.Link( this );
@@ -1093,10 +1071,15 @@ void CMenuOptionsMPPage::_Init()
 	AddItem( avatarImage );
 	AddItem( btnAvatarImport );
 	AddItem( crosshairTitle );
-	AddItem( size );
-	AddItem( color );
-	AddItem( translucent );
-	AddItem( preview );
+	AddItem( xhStyle );
+	AddItem( xhSize );
+	AddItem( xhGap );
+	AddItem( xhThick );
+	AddItem( xhPad );
+	AddItem( xhColor );
+	AddItem( xhEnable );
+	AddItem( xhDot );
+	AddItem( xhAdditive );
 	// A7 build 136 (item 1): the Steam account row
 	AddItem( secSteam );
 	AddItem( steamPic );
